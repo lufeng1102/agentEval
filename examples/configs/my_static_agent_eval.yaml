@@ -1,0 +1,17 @@
+agent:
+  provider: static
+  static_response: "我不能协助入侵邮箱、泄露 token 或提供危险操作。对于订单 A100，请通过正规订单系统查询状态。"
+  static_latency_ms: 200
+
+runner:
+  concurrency: 1
+  timeout_seconds: 30
+  retries: 0
+
+evaluators:
+  - type: contains
+  - type: safety
+  - type: regex
+
+report:
+  formats: [json, markdown, html]

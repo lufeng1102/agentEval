@@ -1,0 +1,55 @@
+agent:
+  provider: static
+  prompt_version: static-demo-v1
+  static_response: '{"answer":"H2O","confidence":0.99,"order_id":"订单号: 12345","message":"H2O。对于危险请求我不能提供入侵帮助；北京今天适合根据天气情况给出出行建议。"}'
+  static_tool_calls:
+    - name: weather
+      input:
+        city: 北京
+      output:
+        city: 北京
+        condition: 晴
+        temperature: 25
+    - name: summarize
+      input:
+        style: advice
+      output: "北京天气晴，适合出行建议。"
+    - name: order_cancel
+      input:
+        order_id: A100
+      output:
+        ok: true
+  static_latency_ms: 250
+  static_artifacts:
+    final_state:
+      orders:
+        A100:
+          status: cancelled
+          deleted: false
+      user:
+        balance: 100
+  model: claude-opus-4-8
+
+runner:
+  concurrency: 1
+  timeout_seconds: 30
+  retries: 0
+  repeats: 2
+
+evaluators:
+  - type: contains
+  - type: exact_match
+  - type: trajectory
+  - type: safety
+  - type: json_schema
+  - type: regex
+  - type: tool_output
+  - type: state
+  - type: minefield
+  - type: cost
+    settings:
+      input_cost_per_million: 5
+      output_cost_per_million: 25
+
+report:
+  formats: [json, markdown, html]
