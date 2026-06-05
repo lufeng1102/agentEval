@@ -7,7 +7,9 @@ AgentEval is a lightweight Python evaluation framework for Claude/LLM agents. It
 - YAML evaluation datasets with schema validation.
 - Pluggable agent adapters:
   - `static` adapter for deterministic local smoke tests.
-  - `anthropic` adapter using the official Anthropic Python SDK.
+  - `anthropic` adapter using the official Anthropic Python SDK with mock tool-loop and scripted multi-turn support.
+  - `claude_code` adapter for evaluating Claude Code custom agents through the Claude Code CLI.
+  - `import` / `plugin` adapters for external agent implementations.
 - Full trace recording to JSONL for auditability and offline analysis.
 - Rule-based evaluators:
   - `exact_match`
@@ -398,7 +400,16 @@ Each run also writes `manifest.json`. It records reproducibility metadata such a
 
 ### Add an agent adapter
 
-Implement the `AgentAdapter` interface and return an `AgentRun`. Then register the provider in `_build_agent`.
+Implement the `AgentAdapter` interface and return an `AgentRun`. Built-in providers are registered in `_build_agent`, and external adapters can be loaded without code changes through the `import`/`plugin` provider:
+
+```yaml
+agent:
+  provider: import
+  settings:
+    import_path: my_package.adapters.build_agent
+```
+
+The imported object can be a factory that accepts `AppConfig`, a no-argument factory, or an already constructible adapter object returned by the factory.
 
 Adapter responsibilities:
 
@@ -442,6 +453,33 @@ PYTHONPATH=src python -m cli run \
   --min-score 0.8
 ```
 
+Run a focused subset by case ID and/or tag:
+
+```bash
+PYTHONPATH=src python -m cli run \
+  --dataset examples/datasets/basic_agent_eval.yaml \
+  --config examples/configs/static_eval.yaml \
+  --out runs/safety \
+  --tag safety
+
+PYTHONPATH=src python -m cli run \
+  --dataset examples/datasets/basic_agent_eval.yaml \
+  --config examples/configs/static_eval.yaml \
+  --out runs/factual \
+  --case factual_001 \
+  --exclude-tag slow
+```
+
+Validate dataset/config compatibility without running agents:
+
+```bash
+PYTHONPATH=src python -m cli validate \
+  --dataset examples/datasets/basic_agent_eval.yaml \
+  --config examples/configs/static_eval.yaml
+```
+
+Validation checks that case-level evaluator names are configured and that common evaluator-specific `expected` fields are present, such as `expected.regex` for `regex` and `expected.json_schema` for `json_schema`.
+
 The command exits with code `1` when thresholds are not met.
 
 ## Using Claude
@@ -457,7 +495,34 @@ PYTHONPATH=src python -m cli run \
   --out runs/claude
 ```
 
-The Claude adapter uses the official `anthropic` Python SDK.
+The Claude adapter uses the official `anthropic` Python SDK. When a case defines `scenario.tools`, the adapter sends those mock tools to Claude, executes returned `tool_use` blocks with `MockToolRuntime`, sends `tool_result` blocks back to Claude, and records tool outputs/state in the trace. When a case defines a scripted `scenario.user_simulator`, the adapter executes those turns as real multi-turn conversation history rather than appending all user turns at once.
+
+## Claude Code adapter config
+
+Use the `claude_code` provider to evaluate a Claude Code custom agent through the Claude Code CLI:
+
+```yaml
+agent:
+  provider: claude_code
+  settings:
+    agent_name: my-agent
+    cwd: /path/to/project
+    timeout_seconds: 120
+    executable: claude
+
+runner:
+  concurrency: 1
+  timeout_seconds: 180
+
+evaluators:
+  - type: contains
+  - type: safety
+
+report:
+  formats: [json, markdown, html]
+```
+
+The adapter runs `claude --print` in `settings.cwd`. If `agent_name` is set, the evaluation prompt asks Claude Code to use that custom agent. The final stdout becomes `AgentRun.final_output`; command stderr and non-zero exits are recorded in `AgentRun.errors`.
 
 ## Dataset example
 

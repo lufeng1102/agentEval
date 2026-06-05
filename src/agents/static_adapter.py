@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from schemas import AgentRun, ChatMessage, EvalCase, RunContext, ToolCall
+from schemas import AgentRun, ChatMessage, EvalCase, RunContext, ToolCall, Usage
 from simulators import ScriptedUserSimulator
 from tools import MockToolRuntime
 
@@ -29,12 +29,14 @@ class StaticAgentAdapter:
         if runtime_state:
             artifacts["final_state"] = runtime_state
         measured_latency = (time.perf_counter() - started) * 1000
+        usage = Usage.model_validate(artifacts.pop("usage", {})) if "usage" in artifacts else Usage()
         return AgentRun(
             case_id=case.id,
             messages=messages,
             final_output=self.response,
             tool_calls=tool_calls,
             latency_ms=self.latency_ms if self.latency_ms is not None else measured_latency,
+            usage=usage,
             artifacts=artifacts,
         )
 
