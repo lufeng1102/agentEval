@@ -20,6 +20,11 @@ class ClaudeAgentAdapter:
         self.client = client or anthropic.AsyncAnthropic()
 
     async def run(self, case: EvalCase, context: RunContext) -> AgentRun:
+        if case.scenario.get("mode") == "dynamic":
+            from runners.dynamic import DynamicScenarioRuntime
+
+            return await DynamicScenarioRuntime(self).run(case, context)
+
         started = time.perf_counter()
         api_messages = [_message_to_api(message) for message in _case_messages(case)]
         trace_messages = list(_case_messages(case))
@@ -66,6 +71,18 @@ class ClaudeAgentAdapter:
             raw_response={"responses": raw_responses},
             artifacts=artifacts,
         )
+
+    async def complete_turn(
+        self,
+        messages: list[ChatMessage],
+        tools: list[dict[str, Any]],
+        context: RunContext,
+        runtime: MockToolRuntime,
+    ) -> tuple[str, list[ChatMessage], list[ToolCall], Usage, list[dict[str, Any]]]:
+        api_messages = [_message_to_api(message) for message in messages]
+        trace_messages = list(messages)
+        final_output, _, trace_messages, tool_calls, usage, raw_responses = await self._complete_turn(api_messages, trace_messages, tools, runtime)
+        return final_output, trace_messages, tool_calls, usage, raw_responses
 
     async def _complete_turn(
         self,

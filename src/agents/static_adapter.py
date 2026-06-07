@@ -18,6 +18,11 @@ class StaticAgentAdapter:
         self.artifacts = artifacts or {}
 
     async def run(self, case: EvalCase, context: RunContext) -> AgentRun:
+        if case.scenario.get("mode") == "dynamic":
+            from runners.dynamic import DynamicScenarioRuntime
+
+            return await DynamicScenarioRuntime(self).run(case, context)
+
         started = time.perf_counter()
         messages = _case_messages(case)
         simulator = ScriptedUserSimulator.from_case(case)
@@ -39,6 +44,15 @@ class StaticAgentAdapter:
             usage=usage,
             artifacts=artifacts,
         )
+
+    async def complete_turn(
+        self,
+        messages: list[ChatMessage],
+        tools: list[dict[str, Any]],
+        context: RunContext,
+        runtime: MockToolRuntime,
+    ) -> tuple[str, list[ChatMessage], list[ToolCall], Usage, list[dict[str, Any]]]:
+        return self.response, [*messages, ChatMessage(role="assistant", content=self.response)], list(self.tool_calls), Usage(), []
 
 
 def _case_messages(case: EvalCase) -> list[ChatMessage]:

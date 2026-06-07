@@ -34,10 +34,20 @@ class MockToolRuntime:
                 continue
             if "mock_output" in tool:
                 data.output = tool.get("mock_output")
+            if "dynamic_output" in tool:
+                data.output = _dynamic_output(self.state, tool.get("dynamic_output") or {}, data)
             for update in tool.get("state_updates", []) or []:
                 _apply_state_update(self.state, update, data)
             updated.append(data)
         return updated, self.state
+
+
+def _dynamic_output(state: dict[str, Any], spec: dict[str, Any], call: ToolCall) -> Any:
+    if spec.get("type") == "state_lookup":
+        path = _resolve_templates(str(spec.get("path", "")), call)
+        exists, value = get_path(state, str(path))
+        return deepcopy(value) if exists else None
+    return None
 
 
 def _validate_input(schema: dict[str, Any] | None, value: dict[str, Any]) -> list[str]:
