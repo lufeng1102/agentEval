@@ -7,7 +7,9 @@ AgentEval is a lightweight Python evaluation framework for Claude/LLM agents. It
 - YAML evaluation datasets with schema validation.
 - Pluggable agent adapters:
   - `static` adapter for deterministic local smoke tests.
-  - `anthropic` adapter using the official Anthropic Python SDK.
+  - `anthropic` adapter using the official Anthropic Python SDK with mock tool-loop and scripted multi-turn support.
+  - `claude_code` adapter for evaluating Claude Code custom agents through the Claude Code CLI.
+  - `import` / `plugin` adapters for external agent implementations.
 - Full trace recording to JSONL for auditability and offline analysis.
 - Rule-based evaluators:
   - `exact_match`
@@ -398,7 +400,16 @@ Each run also writes `manifest.json`. It records reproducibility metadata such a
 
 ### Add an agent adapter
 
-Implement the `AgentAdapter` interface and return an `AgentRun`. Then register the provider in `_build_agent`.
+Implement the `AgentAdapter` interface and return an `AgentRun`. Built-in providers are registered in `_build_agent`, and external adapters can be loaded without code changes through the `import`/`plugin` provider:
+
+```yaml
+agent:
+  provider: import
+  settings:
+    import_path: my_package.adapters.build_agent
+```
+
+The imported object can be a factory that accepts `AppConfig`, a no-argument factory, or an already constructible adapter object returned by the factory.
 
 Adapter responsibilities:
 
@@ -442,6 +453,33 @@ PYTHONPATH=src python -m cli run \
   --min-score 0.8
 ```
 
+Run a focused subset by case ID and/or tag:
+
+```bash
+PYTHONPATH=src python -m cli run \
+  --dataset examples/datasets/basic_agent_eval.yaml \
+  --config examples/configs/static_eval.yaml \
+  --out runs/safety \
+  --tag safety
+
+PYTHONPATH=src python -m cli run \
+  --dataset examples/datasets/basic_agent_eval.yaml \
+  --config examples/configs/static_eval.yaml \
+  --out runs/factual \
+  --case factual_001 \
+  --exclude-tag slow
+```
+
+Validate dataset/config compatibility without running agents:
+
+```bash
+PYTHONPATH=src python -m cli validate \
+  --dataset examples/datasets/basic_agent_eval.yaml \
+  --config examples/configs/static_eval.yaml
+```
+
+Validation checks that case-level evaluator names are configured and that common evaluator-specific `expected` fields are present, such as `expected.regex` for `regex` and `expected.json_schema` for `json_schema`.
+
 The command exits with code `1` when thresholds are not met.
 
 ## Using Claude
@@ -457,7 +495,130 @@ PYTHONPATH=src python -m cli run \
   --out runs/claude
 ```
 
-The Claude adapter uses the official `anthropic` Python SDK.
+The Claude adapter uses the official `anthropic` Python SDK. When a case defines `scenario.tools`, the adapter sends those mock tools to Claude, executes returned `tool_use` blocks with `MockToolRuntime`, sends `tool_result` blocks back to Claude, and records tool outputs/state in the trace. When a case defines a scripted `scenario.user_simulator`, the adapter executes those turns as real multi-turn conversation history rather than appending all user turns at once.
+
+## Dynamic agent evaluation
+
+Dynamic scenarios let AgentEval run deterministic multi-turn evaluations with mock tools, state changes, rule-based user replies, and stop conditions. Enable this by setting `scenario.mode: dynamic` in a case. The dynamic runtime is supported by the `static` and `anthropic` adapters.
+
+```yaml
+cases:
+  - id: dynamic_order_cancel
+    input: "请取消订单 A100。"
+    scenario:
+      mode: dynamic
+      max_turns: 2
+      initial_state:
+        orders:
+          A100:
+            status: paid
+      user_simulator:
+        type: rule_based
+        rules:
+          - when:
+              output_contains: "确认"
+            reply: "确认取消。"
+      tools:
+        - name: order_cancel
+          input_schema:
+            type: object
+            required: [order_id]
+            properties:
+              order_id:
+                type: string
+          mock_output:
+            ok: true
+          state_updates:
+            - path: orders.${input.order_id}.status
+              value: cancelled
+      stop_conditions:
+        - type: final_state_matches
+          state:
+            orders.A100.status: cancelled
+    expected:
+      required_tools: [order_cancel]
+      final_state:
+        orders.A100.status: cancelled
+    evaluators: [trajectory, state]
+```
+
+Supported first-pass dynamic features:
+
+- `max_turns` to bound the interaction. `max_turns` is also used as the fallback stop reason when the turn budget is exhausted.
+- `user_simulator.type: rule_based` with:
+  - `output_contains` rules, which match against the latest assistant output.
+  - `state_matches` rules, which match against the current runtime state after tool execution.
+- tool `mock_output`, `state_updates`, and `dynamic_output: {type: state_lookup, path: ...}`.
+  - `state_lookup` paths can use input templates such as `${input.order_id}`.
+  - Missing state lookup paths return `null` as the tool output instead of failing the run.
+- stop conditions, evaluated in the order they are configured:
+  - `output_contains`
+  - `tool_called`
+  - `final_state_matches`
+- dynamic trace artifacts under `AgentRun.artifacts.dynamic`, including:
+  - `turns`: assistant output and tool calls per dynamic turn.
+  - `state_history`: state snapshots after each turn.
+  - `stop_reason`: why the dynamic interaction stopped.
+  - `final_state`: the final runtime state.
+- usage aggregation across dynamic turns, including input/output and cache token counters.
+
+When no stop condition matches, the runtime asks the rule-based simulator for the next user turn. If no simulator is configured or no rule matches, the run stops with `stop_reason: user_simulator_exhausted`.
+
+Run the included example:
+
+```bash
+PYTHONPATH=src python -m cli run \
+  --dataset examples/datasets/dynamic_agent_eval.yaml \
+  --config examples/configs/static_eval.yaml \
+  --out runs/dynamic
+```
+
+Inspect the dynamic trace:
+
+```bash
+python - <<'PY'
+import json
+from pathlib import Path
+
+for line in Path('runs/dynamic/traces.jsonl').read_text(encoding='utf-8').splitlines():
+    run = json.loads(line)
+    print(run['case_id'], run.get('artifacts', {}).get('dynamic', {}).get('stop_reason'))
+PY
+```
+
+Use existing evaluators with dynamic runs:
+
+- `trajectory` checks dynamic tool calls.
+- `tool_output` checks mock or dynamic tool outputs.
+- `state` checks `artifacts.final_state` written by the dynamic runtime.
+- `contains`, `regex`, `safety`, and judge evaluators still operate on the final assistant output/trace.
+
+## Claude Code adapter config
+
+Use the `claude_code` provider to evaluate a Claude Code custom agent through the Claude Code CLI:
+
+```yaml
+agent:
+  provider: claude_code
+  settings:
+    agent_name: my-agent
+    cwd: /path/to/project
+    timeout_seconds: 120
+    executable: claude
+
+runner:
+  concurrency: 1
+  timeout_seconds: 180
+
+evaluators:
+  - type: contains
+  - type: safety
+
+report:
+  formats: [json, markdown, html]
+```
+
+The adapter runs `claude --print` in `settings.cwd`. If `agent_name` is set, the evaluation prompt asks Claude Code to use that custom agent. The final stdout becomes `AgentRun.final_output`; command stderr and non-zero exits are recorded in `AgentRun.errors`.
 
 ## Dataset example
 

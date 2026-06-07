@@ -104,3 +104,18 @@ def test_html_reporter_summarizes_json_payload_without_summary(tmp_path: Path) -
     assert "Tool calls" in content
     assert "lookup" in content
     assert "Output tokens" in content
+
+
+def test_html_reporter_escapes_case_output_and_failure_content(tmp_path: Path) -> None:
+    path = tmp_path / "report.html"
+    unsafe = "<script>alert('x')</script>"
+    cases = [EvalCase(id="case<script>", input="q", name="Name <b>bold</b>", tags=["tag<script>"])]
+    runs = [AgentRun(case_id="case<script>", final_output=unsafe, errors=[unsafe], tool_calls=[ToolCall(name="tool<script>", input={"x": unsafe}, output=unsafe, error=unsafe)])]
+    results = [EvalResult(case_id="case<script>", evaluator="contains<script>", score=0, passed=False, failure_reason=unsafe)]
+
+    write_html_report(path, cases, runs, results)
+
+    content = path.read_text(encoding="utf-8")
+    assert unsafe not in content
+    assert "&lt;script&gt;alert(&#x27;x&#x27;)&lt;/script&gt;" in content
+    assert "Name &lt;b&gt;bold&lt;/b&gt;" in content

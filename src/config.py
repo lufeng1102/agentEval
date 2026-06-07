@@ -7,6 +7,7 @@ import yaml
 from pydantic import BaseModel, Field
 
 from schemas import EvalDataset, ToolCall
+from expected_files import resolve_expected_files
 
 
 class AgentConfig(BaseModel):
@@ -24,6 +25,7 @@ class AgentConfig(BaseModel):
     static_tool_calls: list[ToolCall] = Field(default_factory=list)
     static_latency_ms: float | None = None
     static_artifacts: dict[str, Any] = Field(default_factory=dict)
+    settings: dict[str, Any] = Field(default_factory=dict)
 
 
 class RunnerConfig(BaseModel):
@@ -64,4 +66,55 @@ def load_config(path: str | Path) -> AppConfig:
 
 
 def load_dataset(path: str | Path) -> EvalDataset:
-    return EvalDataset.model_validate(load_yaml(path))
+    payload = _load_dataset_payload(Path(path))
+    return EvalDataset.model_validate(payload)
+
+
+def _load_dataset_payload(path: Path, seen: set[Path] | None = None) -> dict[str, Any]:
+    seen = seen or set()
+    if path.is_dir():
+        files = sorted([*path.glob("*.yaml"), *path.glob("*.yml")])
+        return _merge_dataset_payloads([_load_dataset_payload(file, seen) for file in files], sources=files, base_dir=path)
+
+    resolved = path.resolve()
+    if resolved in seen:
+        raise ValueError(f"recursive dataset include: {path}")
+    seen.add(resolved)
+    payload = load_yaml(path)
+    base_cases = list(payload.get("cases") or [])
+    include_payloads = []
+    for include in payload.get("includes") or []:
+        include_paths = sorted(path.parent.glob(str(include)))
+        if not include_paths:
+            raise ValueError(f"dataset include matched no files: {include}")
+        include_payloads.extend(_load_dataset_payload(include_path, seen) for include_path in include_paths)
+    merged = _merge_dataset_payloads([{"metadata": payload.get("metadata") or {}, "cases": base_cases}, *include_payloads], sources=[path], base_dir=path.parent)
+    seen.remove(resolved)
+    return merged
+
+
+def _merge_dataset_payloads(payloads: list[dict[str, Any]], sources: list[Path] | None = None, base_dir: Path | None = None) -> dict[str, Any]:
+    metadata: dict[str, Any] = {}
+    cases: list[dict[str, Any]] = []
+    case_ids: set[str] = set()
+    all_sources: list[str] = []
+    base_dir = base_dir or Path.cwd()
+    for payload in payloads:
+        metadata.update(payload.get("metadata") or {})
+        for source in payload.get("metadata", {}).get("sources", []) or []:
+            all_sources.append(str(source))
+        for case in payload.get("cases") or []:
+            if isinstance(case, dict):
+                case = dict(case)
+                case["expected"] = resolve_expected_files(case.get("expected") or {}, base_dir)
+            case_id = str(case.get("id")) if isinstance(case, dict) else ""
+            if case_id in case_ids:
+                raise ValueError(f"duplicate case id: {case_id}")
+            case_ids.add(case_id)
+            cases.append(case)
+    if sources:
+        all_sources.extend(str(source) for source in sources)
+    if all_sources:
+        deduped_sources = list(dict.fromkeys(all_sources))
+        metadata["sources"] = deduped_sources
+    return {"metadata": metadata, "cases": cases}

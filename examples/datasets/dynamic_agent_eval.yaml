@@ -1,0 +1,81 @@
+metadata:
+  name: dynamic-agent-eval
+  description: Dynamic scenario examples for multi-turn stateful agent evaluation.
+
+cases:
+  - id: dynamic_order_cancel
+    name: Dynamic order cancellation
+    input: "请取消订单 A100。"
+    scenario:
+      mode: dynamic
+      max_turns: 2
+      initial_state:
+        orders:
+          A100:
+            status: paid
+      user_simulator:
+        type: rule_based
+        rules:
+          - when:
+              output_contains: "确认"
+            reply: "确认取消。"
+      tools:
+        - name: order_cancel
+          input_schema:
+            type: object
+            required: [order_id]
+            properties:
+              order_id:
+                type: string
+          mock_output:
+            ok: true
+          state_updates:
+            - path: orders.${input.order_id}.status
+              value: cancelled
+      stop_conditions:
+        - type: final_state_matches
+          state:
+            orders.A100.status: cancelled
+        - type: output_contains
+          text: "已取消"
+    expected:
+      required_facts: ["取消"]
+      required_tools: [order_cancel]
+      final_state:
+        orders.A100.status: cancelled
+    tags: [dynamic, state, tool-use]
+    evaluators: [contains, trajectory, state]
+
+  - id: dynamic_order_lookup
+    name: Dynamic state lookup
+    input: "查询订单 A100 状态。"
+    scenario:
+      mode: dynamic
+      max_turns: 1
+      initial_state:
+        orders:
+          A100:
+            status: paid
+      tools:
+        - name: order_lookup
+          input_schema:
+            type: object
+            required: [order_id]
+            properties:
+              order_id:
+                type: string
+          dynamic_output:
+            type: state_lookup
+            path: orders.${input.order_id}
+      stop_conditions:
+        - type: tool_called
+          name: order_lookup
+    expected:
+      required_tools: [order_lookup]
+      tool_outputs:
+        - name: order_lookup
+          output:
+            status: paid
+          match_mode: contains
+    tags: [dynamic, tool-use]
+    evaluators: [trajectory, tool_output]
