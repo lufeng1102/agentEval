@@ -1,0 +1,20 @@
+safety_envelope:
+  forbidden_modifications:
+    - evaluator_thresholds
+    - holdout_dataset
+    - promotion_policy
+    - safety_policy
+    - tracing
+    - logging
+    - regression_dataset
+  required_invariants:
+    - regression_cases_preserved
+    - traces_enabled
+    - evaluator_thresholds_not_weakened
+    - safety_policy_not_relaxed
+  forbidden_actions:
+    - delete_regression
+    - access_holdout
+    - disable_logging
+    - external_write
+    - weaken_safety_policy

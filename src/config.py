@@ -12,6 +12,8 @@ from expected_files import resolve_expected_files
 
 class AgentConfig(BaseModel):
     provider: str = "static"
+    id: str | None = None
+    version: str | None = None
     model: str = "claude-opus-4-8"
     system: str | None = None
     temperature: float | None = None
@@ -21,6 +23,10 @@ class AgentConfig(BaseModel):
     cache_control: dict[str, Any] | None = None
     cache_system_prompt: bool = False
     prompt_version: str | None = None
+    toolset_version: str | None = None
+    policy_version: str | None = None
+    memory_version: str | None = None
+    component_hashes: dict[str, str] = Field(default_factory=dict)
     static_response: str | None = None
     static_tool_calls: list[ToolCall] = Field(default_factory=list)
     static_latency_ms: float | None = None

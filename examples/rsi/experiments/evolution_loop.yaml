@@ -1,0 +1,9 @@
+evolution_loop:
+  id: refund-loop
+  steps:
+    - iteration: 1
+      input_run: runs/v1
+      candidate_run: runs/v2
+      diagnosis: runs/v1/diagnosis.json
+      modification: examples/rsi/modifications/prompt_repair.json
+      decision: accepted

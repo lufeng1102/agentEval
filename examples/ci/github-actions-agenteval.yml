@@ -1,0 +1,52 @@
+name: AgentEval Evolution Gate
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  agenteval:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install AgentEval
+        run: python -m pip install -e '.[dev]'
+      - name: Run tests
+        run: python -m pytest
+      - name: Run baseline evaluation
+        run: |
+          PYTHONPATH=src python -m cli run \
+            --dataset examples/datasets/basic_agent_eval.yaml \
+            --config examples/configs/static_eval.yaml \
+            --out runs/ci-baseline
+      - name: Run candidate evaluation
+        run: |
+          PYTHONPATH=src python -m cli run \
+            --dataset examples/datasets/basic_agent_eval.yaml \
+            --config examples/configs/static_eval.yaml \
+            --out runs/ci-candidate
+      - name: Diagnose and decide
+        run: |
+          PYTHONPATH=src python -m cli diagnose \
+            --baseline runs/ci-baseline \
+            --candidate runs/ci-candidate \
+            --out runs/ci-candidate/diagnosis \
+            --format markdown --format json
+          PYTHONPATH=src python -m cli decide \
+            --baseline runs/ci-baseline \
+            --candidate runs/ci-candidate \
+            --policy examples/policies/promotion.yaml \
+            --out runs/ci-candidate/decision \
+            --format markdown --format json
+          PYTHONPATH=src python -m cli pr-summary \
+            --decision runs/ci-candidate/decision.json \
+            --diagnosis runs/ci-candidate/diagnosis.json \
+            --out runs/ci-candidate/pr-comment.md
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: agenteval-reports
+          path: runs/

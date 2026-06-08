@@ -1,0 +1,15 @@
+{
+  "modified_components": ["prompt", "tool_description"],
+  "rationale": "Refund regressions failed because the agent omitted the required deadline.",
+  "diff_summary": "Added explicit instruction to include refund deadlines when present in policy lookup results.",
+  "diff": "+ Always include refund deadline if available.",
+  "generated_by_agent": true,
+  "rollback_plan": "Restore prompt_version refund-v2.",
+  "expected_impact": {
+    "fixed_failures": ["regression_refund_001"],
+    "risk": "medium"
+  },
+  "actions": [
+    {"type": "edit_prompt", "target": "refund_system_prompt"}
+  ]
+}

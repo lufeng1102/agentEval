@@ -1,0 +1,33 @@
+diagnosis_judge:
+  provider: anthropic
+  model: claude-opus-4-8
+  enabled: true
+  strict: false
+  timeout_seconds: 60
+  trigger:
+    mode: auto
+    min_severity: high
+    include_unknown_root_cause: true
+    include_low_confidence: true
+    max_rule_confidence: 0.75
+    include_new_safety_failures: true
+    include_high_risk_regressions: true
+    include_multiple_component_changes: true
+  input_limits:
+    max_clusters: 5
+    max_cases_per_cluster: 3
+    max_trace_chars: 12000
+    max_failure_reason_chars: 2000
+    max_tool_output_chars: 4000
+    max_context_json_chars: 80000
+  output:
+    max_diagnoses: 5
+    include_patch_suggestions: false
+    include_human_review_questions: true
+  cost:
+    max_requests: 5
+    max_input_tokens: 120000
+    max_output_tokens: 8000
+  cache:
+    enabled: true
+    cache_dir: .agenteval/judge-cache

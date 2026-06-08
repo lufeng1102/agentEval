@@ -28,6 +28,9 @@ agenteval = "cli:app"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = [
+  "anthropic_live: tests that call the live Anthropic API and require ANTHROPIC_API_KEY",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src"]

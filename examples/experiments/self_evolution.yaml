@@ -1,0 +1,14 @@
+experiment:
+  id: self-evolution-static
+  dataset: examples/datasets/basic_agent_eval.yaml
+  out: runs/experiments/self-evolution-static
+  baseline:
+    config: examples/configs/static_eval.yaml
+    run_dir: runs/experiments/self-evolution-static/baseline
+  candidate:
+    config: examples/configs/static_eval.yaml
+    run_dir: runs/experiments/self-evolution-static/candidate
+  promotion_policy: examples/policies/promotion.yaml
+  mutation:
+    type: static_smoke
+    description: Static adapter self-comparison experiment for validating the evolution workflow.

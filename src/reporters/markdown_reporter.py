@@ -41,6 +41,26 @@ def write_markdown_report(path: str | Path, cases: list[EvalCase], runs: list[Ag
     for tag, tag_summary in summary["by_tag"].items():
         lines.append(f"| {tag} | {tag_summary['results']} | {tag_summary['pass_rate']:.2%} | {tag_summary['avg_score']:.2f} |")
 
+    lines.extend([
+        "",
+        "## By Capability",
+        "",
+        "| Capability | Results | Pass rate | Avg score |",
+        "| --- | ---: | ---: | ---: |",
+    ])
+    for capability, capability_summary in summary.get("by_capability", {}).items():
+        lines.append(f"| {capability} | {capability_summary['results']} | {capability_summary['pass_rate']:.2%} | {capability_summary['avg_score']:.2f} |")
+
+    lines.extend([
+        "",
+        "## By Risk Level",
+        "",
+        "| Risk level | Results | Pass rate | Avg score |",
+        "| --- | ---: | ---: | ---: |",
+    ])
+    for risk_level, risk_summary in summary.get("by_risk_level", {}).items():
+        lines.append(f"| {risk_level} | {risk_summary['results']} | {risk_summary['pass_rate']:.2%} | {risk_summary['avg_score']:.2f} |")
+
     lines.extend(["", "## Errors", ""])
     if not summary["errors"]["by_case"]:
         lines.append("No run errors.")

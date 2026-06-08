@@ -1,0 +1,26 @@
+eval_integrity:
+  required_artifacts:
+    - report.json
+    - manifest.json
+    - traces.jsonl
+    - results.jsonl
+  protected_components:
+    - evaluator
+    - evaluator_thresholds
+    - dataset
+    - holdout_dataset
+    - promotion_policy
+    - safety_policy
+    - reporter
+    - manifest
+    - tracing
+    - logging
+  forbidden_actions:
+    - modify_evaluator
+    - modify_policy
+    - delete_regression
+    - disable_logging
+    - access_holdout
+    - delete_file
+    - delete_trace
+    - weaken_safety_policy

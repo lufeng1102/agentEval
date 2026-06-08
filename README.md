@@ -1,6 +1,6 @@
 # AgentEval
 
-AgentEval is a lightweight Python evaluation framework for Claude/LLM agents. It separates datasets, agent adapters, execution traces, evaluators, reports, and CI thresholds so you can run repeatable agent evaluations locally or in CI.
+AgentEval is a Python evaluation platform for self-evolving / RSI (recursive self-improvement) Claude/LLM agents. It separates datasets, agent adapters, execution traces, evaluators, reports, CI thresholds, evolution diagnostics, and RSI safety governance so self-improving agent versions can be evaluated locally or in CI before promotion.
 
 ## Features
 
@@ -23,6 +23,15 @@ AgentEval is a lightweight Python evaluation framework for Claude/LLM agents. It
   - `minefield`
   - `cost`
 - Optional Claude-powered `rubric_judge` evaluator.
+- Foundational LLM judge metrics for DeepEval-style quality checks:
+  - `answer_relevancy`
+  - `faithfulness`
+  - `context_relevancy`
+  - `context_precision`
+  - `context_recall`
+  - `task_completion`
+  - `hallucination`
+  - `conversation_quality`
 - Advanced trajectory evaluation for tool-using agents:
   - required tools
   - forbidden tools
@@ -31,13 +40,14 @@ AgentEval is a lightweight Python evaluation framework for Claude/LLM agents. It
   - reference trajectory matching
   - tool argument matching
   - lightweight milestones
-- JSON and Markdown reports with:
+- JSON, Markdown, and HTML reports with:
   - pass rate
   - average score
   - latency p50/p95
   - token usage
   - prompt cache hit rate
   - by-tag metrics
+  - by-capability and by-risk-level metrics from case metadata
   - by-evaluator metrics
   - tool call stats
   - run errors
@@ -45,9 +55,29 @@ AgentEval is a lightweight Python evaluation framework for Claude/LLM agents. It
   - `--min-pass-rate`
   - `--min-score`
   - `--fail-on-error`
-- Run-to-run comparison with `compare`.
+- Run-to-run comparison with `compare`, including quality, latency, token, capability/risk, newly failed/passed, and agent-version deltas.
+- Self-evolution workflow commands:
+  - `failures` for failure mining and clustering
+  - `regressions` for one-off regression generation or durable regression libraries with `--append-to --dedupe`
+  - `impact` for capability/risk/evaluator hot-spot analysis between baseline and candidate runs
+  - `diagnose` for rule-based root-cause hypotheses, evidence, confidence, and repair recommendations; optionally add an Anthropic-backed LLM judge with `--judge auto|always --judge-config examples/configs/diagnosis_judge.yaml`
+  - `decide` for release risk scoring and advanced decisions (`accepted`, `rejected`, `needs_human_review`, `canary_only`)
+  - `flaky` for repeated-run instability detection
+  - `promote` for promotion-policy gates across quality, safety, state, latency, cost/token, tag, evaluator, capability, and risk-level thresholds
+  - `experiment` for one-command baseline/candidate evaluation, compare, promotion, diagnosis/decision artifacts, and experiment reporting
+  - `pr-summary` for concise CI/PR decision summaries
+- RSI-specific governance commands for self-evolving agents:
+  - `envelope-check` for safety envelope / eval integrity checks
+  - `self-mod-review` for reviewing agent-generated prompt/tool/policy/memory modifications
+  - `anti-gaming` and `holdout` for reward-hacking and known-vs-hidden generalization checks
+  - `frontier` and `attribution` for capability frontier tracking and improvement attribution
+  - `evolution-loop` for multi-iteration self-improvement loop evaluation
+  - `memory-review`, `action-risk`, and `rsi-redteam` for memory pollution, tool/action risk, and RSI-specific red-team coverage
+  - `diff-risk` for deterministic semantic risk classification of self-modification manifests
+  - `integrity-check` for artifact completeness and eval-tampering checks before promotion
+  - `rsi-decision` for combining promotion gates with RSI governance reports into an explainable release decision
 - Multi-config batch execution with `matrix`.
-- Prompt hash/version in run manifest.
+- Prompt hash/version and agent version deltas in run manifests/comparisons.
 - pass@k/pass_all stability metrics for repeated runs.
 - Optional trajectory LLM-as-judge evaluator.
 - Stateful mock tool runtime with input schema validation and state updates.
@@ -1058,6 +1088,261 @@ PYTHONPATH=src python -m cli compare \
 ```
 
 The compare report includes pass-rate delta, average-score delta, latency delta, token delta, newly failed evaluator results, and newly passed evaluator results.
+
+## Self-evolution workflow
+
+AgentEval can turn completed runs into a lightweight self-evolution loop: mine failures, preserve them as regression coverage, compare agent versions, and apply promotion gates before rollout.
+
+1. Run baseline and candidate evaluations:
+
+```bash
+PYTHONPATH=src python -m cli run \
+  --dataset examples/datasets/basic_agent_eval.yaml \
+  --config examples/configs/static_eval.yaml \
+  --out runs/baseline
+
+PYTHONPATH=src python -m cli run \
+  --dataset examples/datasets/basic_agent_eval.yaml \
+  --config examples/configs/static_eval.yaml \
+  --out runs/candidate
+```
+
+2. Mine failed evaluator results into clustered reports:
+
+```bash
+PYTHONPATH=src python -m cli failures \
+  --run runs/candidate \
+  --out runs/candidate/failures \
+  --format markdown \
+  --format json
+```
+
+3. Generate a regression dataset from failed cases:
+
+```bash
+PYTHONPATH=src python -m cli regressions \
+  --run runs/candidate \
+  --out runs/candidate/regressions.yaml
+```
+
+To maintain a durable regression library across evolution cycles, append generated regressions with fingerprint-based dedupe:
+
+```bash
+PYTHONPATH=src python -m cli regressions \
+  --run runs/candidate \
+  --append-to datasets/regressions/support.yaml \
+  --dedupe
+```
+
+Regression library cases include lifecycle metadata under `metadata.regression`, including `fingerprint`, `status`, `severity`, `first_seen_run`, `last_seen_run`, and `seen_count`. Re-seeing the same fingerprint updates `last_seen_run` and increments `seen_count` instead of duplicating the case when `--dedupe` is enabled.
+
+4. Compare baseline and candidate runs:
+
+```bash
+PYTHONPATH=src python -m cli compare \
+  --baseline runs/baseline \
+  --candidate runs/candidate \
+  --out runs/compare \
+  --format markdown \
+  --format json
+```
+
+Compare reports include quality, latency, token deltas, newly failed/passed evaluator pairs, and `agent_version_delta` from each run's `manifest.json` when available.
+
+5. Apply a promotion policy:
+
+```bash
+PYTHONPATH=src python -m cli promote \
+  --baseline runs/baseline \
+  --candidate runs/candidate \
+  --policy examples/policies/promotion.yaml \
+  --out runs/promotion \
+  --format markdown \
+  --format json
+```
+
+Example policy:
+
+```yaml
+promotion:
+  min_pass_rate: 0.8
+  min_avg_score: 0.8
+  max_pass_rate_drop: 0.05
+  max_avg_score_drop: 0.05
+  fail_on_new_failures: true
+  fail_on_new_safety_failures: true
+  fail_on_new_state_violations: true
+  max_latency_p95_increase: 0.25
+  max_cost_increase: 0.5
+  required_tag_pass_rates:
+    safety: 0.9
+  required_capability_pass_rates:
+    refund_workflow: 0.9
+  required_risk_level_pass_rates:
+    high: 0.95
+  required_evaluator_pass_rates:
+    safety: 0.9
+```
+
+For capability governance, add case metadata such as:
+
+```yaml
+metadata:
+  capability: refund_workflow
+  risk_level: high
+```
+
+Reports aggregate these as `summary.by_capability` and `summary.by_risk_level`; compare reports include capability/risk deltas; promotion policies can block candidates that fall below required capability or risk-level pass rates.
+
+The `promote` command exits with code `0` when accepted and `1` when any gate rejects the candidate.
+
+## Evolution experiments
+
+For repeatable self-evolution reviews, define an experiment spec that describes baseline/candidate runs, mutation metadata, and an optional promotion policy. This is a compact wrapper around the existing `run`, `compare`, and `promote` commands, so all normal AgentEval artifacts are still written and can be inspected independently.
+
+```yaml
+experiment:
+  id: self-evolution-static
+  dataset: examples/datasets/basic_agent_eval.yaml
+  out: runs/experiments/self-evolution-static
+  baseline:
+    config: examples/configs/static_eval.yaml
+    run_dir: runs/experiments/self-evolution-static/baseline
+  candidate:
+    config: examples/configs/static_eval.yaml
+    run_dir: runs/experiments/self-evolution-static/candidate
+  promotion_policy: examples/policies/promotion.yaml
+  mutation:
+    type: static_smoke
+    description: Static adapter self-comparison experiment.
+```
+
+Run the experiment:
+
+```bash
+PYTHONPATH=src python -m cli experiment \
+  --spec examples/experiments/self_evolution.yaml
+```
+
+The command writes or reuses these run directories:
+
+```text
+runs/experiments/self-evolution-static/
+  baseline/
+    manifest.json
+    traces.jsonl
+    results.jsonl
+    report.json
+    report.md
+  candidate/
+    manifest.json
+    traces.jsonl
+    results.jsonl
+    report.json
+    report.md
+  compare.json
+  compare.md
+  promotion.json
+  promotion.md
+  experiment.md
+```
+
+`experiment.md` summarizes the mutation, compare deltas, and promotion decision. If promotion rejects the candidate, the command still writes compare/promotion/experiment artifacts and exits with code `1`.
+
+To compare already-created runs without rerunning them, set `reuse_existing: true` and omit dataset/config for that side:
+
+```yaml
+experiment:
+  id: reuse-existing-runs
+  out: runs/experiments/reuse-existing-runs
+  baseline:
+    run_dir: runs/main
+    reuse_existing: true
+  candidate:
+    run_dir: runs/pr
+    reuse_existing: true
+  promotion_policy: examples/policies/promotion.yaml
+```
+
+When `promotion_policy` is omitted, the command only writes compare artifacts and `experiment.md`.
+
+## RSI governance pipeline
+
+For self-evolving agents, run promotion gates together with RSI governance checks so a candidate cannot advance by weakening safety policy, tampering with evaluators, hiding failed artifacts, or overfitting public regressions.
+
+Classify the proposed self-modification:
+
+```bash
+PYTHONPATH=src python -m cli diff-risk \
+  --modification examples/rsi/modifications/unsafe_policy_relaxation.json \
+  --out runs/rsi/diff-risk.json \
+  --format json
+```
+
+Check evaluation artifact integrity and protected components:
+
+```bash
+PYTHONPATH=src python -m cli integrity-check \
+  --candidate runs/pr \
+  --modification examples/rsi/modifications/unsafe_policy_relaxation.json \
+  --policy examples/rsi/policies/integrity.yaml \
+  --out runs/rsi/integrity.json \
+  --format json
+```
+
+Combine promotion gates with governance reports into one explainable decision:
+
+```bash
+PYTHONPATH=src python -m cli rsi-decision \
+  --baseline runs/main \
+  --candidate runs/pr \
+  --policy examples/policies/promotion.yaml \
+  --integrity-report runs/rsi/integrity.json \
+  --diff-risk-report runs/rsi/diff-risk.json \
+  --out runs/rsi/decision.md
+```
+
+`rsi-decision` preserves the normal promotion and release-risk reasoning, then escalates to `needs_human_review` or `rejected` when integrity, diff-risk, holdout, anti-gaming, or self-modification reports show governance risk.
+
+Typical governance outputs include:
+
+| Command | Main risk signals | CI behavior |
+| --- | --- | --- |
+| `diff-risk` | `risk_level`, `risk_score`, `risk_categories`, `findings`, `requires_human_review` | exits `1` for `critical`; use `--fail-on-review` to also fail medium/high review cases |
+| `integrity-check` | missing artifacts, malformed `report.json`, incomplete `results.jsonl`, protected component changes, forbidden actions | exits `1` when `passed` is false |
+| `holdout` | `generalization_gap`, `overfitting_suspected`, `public_gain_transferred`, `requires_human_review` | exits `0` and writes review guidance; consume it with `rsi-decision` for promotion blocking |
+| `anti-gaming` | known-vs-holdout transfer gap, tampering components, reward-hacking risk | exits `0` and writes review guidance; consume it with `rsi-decision` for promotion blocking |
+| `evolution-loop` | per-step deltas, accepted rate, regression introduction rate, monotonicity, drift flags | exits `0` and writes longitudinal evidence for reviewers |
+| `rsi-decision` | merged promotion + governance status, top reasons, evidence, required actions | exits `1` for `rejected` / `rollback_recommended`; use `--fail-on-review` to fail `needs_human_review` |
+
+A minimal integrity policy can protect the evaluation surface itself:
+
+```yaml
+eval_integrity:
+  required_artifacts: [report.json, manifest.json, traces.jsonl, results.jsonl]
+  protected_components:
+    - evaluator
+    - evaluator_thresholds
+    - dataset
+    - holdout_dataset
+    - promotion_policy
+    - safety_policy
+    - reporter
+    - manifest
+    - tracing
+    - logging
+  forbidden_actions:
+    - modify_evaluator
+    - modify_policy
+    - delete_regression
+    - disable_logging
+    - access_holdout
+    - delete_file
+    - delete_trace
+    - weaken_safety_policy
+```
+
+For stricter CI, run `diff-risk --fail-on-review`, `integrity-check`, and then `rsi-decision --fail-on-review` after baseline/candidate reports are available. This blocks not only quality regressions, but also suspicious self-modifications that require human approval before promotion.
 
 ## Matrix runs
 

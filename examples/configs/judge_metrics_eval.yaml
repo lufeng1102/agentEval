@@ -1,0 +1,25 @@
+agent:
+  provider: static
+  static_response: Refund requests must be made within 30 days, subject to eligibility review.
+  static_artifacts:
+    retrieval_context:
+      - Customers may request refunds within 30 days of purchase.
+evaluators:
+  - type: answer_relevancy
+    threshold: 0.7
+  - type: faithfulness
+    threshold: 0.75
+  - type: context_relevancy
+    threshold: 0.7
+  - type: context_precision
+    threshold: 0.7
+  - type: context_recall
+    threshold: 0.7
+  - type: task_completion
+    threshold: 0.8
+  - type: hallucination
+    threshold: 0.8
+  - type: conversation_quality
+    threshold: 0.75
+report:
+  formats: [json, markdown]

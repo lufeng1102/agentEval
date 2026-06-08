@@ -14,6 +14,7 @@ from evaluators.state import StateEvaluator
 from evaluators.tool_output import ToolOutputEvaluator
 from evaluators.trajectory import TrajectoryEvaluator
 from evaluators.trajectory_judge import TrajectoryJudgeEvaluator
+from evaluators.judge_metrics import JUDGE_METRIC_TYPES, JudgeMetricEvaluator
 
 
 def build_evaluator(config: EvaluatorConfig) -> Evaluator:
@@ -39,6 +40,8 @@ def build_evaluator(config: EvaluatorConfig) -> Evaluator:
         return StateEvaluator()
     if config.type == "trajectory_judge":
         return TrajectoryJudgeEvaluator(config)
+    if config.type in JUDGE_METRIC_TYPES:
+        return JudgeMetricEvaluator(config, config.type)
     if config.type in {"import", "plugin"}:
         return _build_imported_evaluator(config)
     if config.type == "rubric_judge":
@@ -76,5 +79,6 @@ __all__ = [
     "ToolOutputEvaluator",
     "TrajectoryEvaluator",
     "TrajectoryJudgeEvaluator",
+    "JudgeMetricEvaluator",
     "build_evaluator",
 ]

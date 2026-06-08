@@ -12,8 +12,12 @@ def summarize(cases: list[EvalCase], runs: list[AgentRun], results: list[EvalRes
     avg_score = sum(result.score for result in results) / len(results) if results else 0
     latencies = sorted(run.latency_ms for run in runs)
     case_tags = {case.id: case.tags for case in cases}
+    case_capabilities = {case.id: str(case.metadata.get("capability")) for case in cases if case.metadata.get("capability")}
+    case_risk_levels = {case.id: str(case.metadata.get("risk_level")) for case in cases if case.metadata.get("risk_level")}
 
     by_tag: dict[str, list[EvalResult]] = defaultdict(list)
+    by_capability: dict[str, list[EvalResult]] = defaultdict(list)
+    by_risk_level: dict[str, list[EvalResult]] = defaultdict(list)
     by_evaluator: dict[str, list[EvalResult]] = defaultdict(list)
     by_failure_type: dict[str, list[EvalResult]] = defaultdict(list)
     for result in results:
@@ -22,6 +26,10 @@ def summarize(cases: list[EvalCase], runs: list[AgentRun], results: list[EvalRes
             by_failure_type[result.failure_type].append(result)
         for tag in case_tags.get(result.case_id, []):
             by_tag[tag].append(result)
+        if result.case_id in case_capabilities:
+            by_capability[case_capabilities[result.case_id]].append(result)
+        if result.case_id in case_risk_levels:
+            by_risk_level[case_risk_levels[result.case_id]].append(result)
 
     input_tokens = sum(run.usage.input_tokens for run in runs)
     output_tokens = sum(run.usage.output_tokens for run in runs)
@@ -60,6 +68,8 @@ def summarize(cases: list[EvalCase], runs: list[AgentRun], results: list[EvalRes
             "by_case": errors_by_case,
         },
         "by_tag": _summarize_groups(by_tag),
+        "by_capability": _summarize_groups(by_capability),
+        "by_risk_level": _summarize_groups(by_risk_level),
         "by_evaluator": _summarize_groups(by_evaluator),
         "by_failure_type": _summarize_groups(by_failure_type),
         "stability": _stability(results),
