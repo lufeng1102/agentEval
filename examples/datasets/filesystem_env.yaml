@@ -1,0 +1,24 @@
+metadata:
+  name: filesystem-environment-eval
+  description: Minimal Environment Harness P0 example.
+cases:
+  - id: filesystem_env_smoke
+    name: Filesystem environment smoke
+    input: |
+      Inspect the copied workspace and update src/auth.py if needed.
+    expected:
+      environment:
+        required_files:
+          - src/auth.py
+        forbidden_modified_files:
+          - tests/**
+        max_modified_files: 3
+        required_command_success:
+          - python -c "from pathlib import Path; assert Path('src/auth.py').exists()"
+        required_test_success: true
+      tests:
+        fail_to_pass:
+          - command: python -c "from pathlib import Path; assert Path('src/auth.py').exists()"
+        require_all_test_commands_pass: true
+        max_test_failures: 0
+    evaluators: [environment, tests]

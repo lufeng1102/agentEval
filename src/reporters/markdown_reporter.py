@@ -22,6 +22,7 @@ def write_markdown_report(path: str | Path, cases: list[EvalCase], runs: list[Ag
         f"- Tokens: input={summary['usage']['input_tokens']}, output={summary['usage']['output_tokens']}, total_input={summary['usage']['total_input_tokens']}, cache_read={summary['usage']['cache_read_input_tokens']}, cache_hit_rate={summary['usage']['cache_hit_rate']:.2%}",
         f"- Tool calls: total={summary['tool_calls']['total']}, failed={summary['tool_calls']['failed']}",
         f"- Run errors: {summary['errors']['total']}",
+        f"- Environment sessions: {summary.get('environment', {}).get('sessions', 0)}, files changed: created={summary.get('environment', {}).get('created_files', 0)}, modified={summary.get('environment', {}).get('modified_files', 0)}, deleted={summary.get('environment', {}).get('deleted_files', 0)}, protected violations={summary.get('environment', {}).get('protected_path_violations', 0)}, command failures={summary.get('environment', {}).get('command_failures', 0)}/{summary.get('environment', {}).get('commands', 0)}, query failures={summary.get('environment', {}).get('query_failures', 0)}/{summary.get('environment', {}).get('queries', 0)}, HTTP failures={summary.get('environment', {}).get('http_failures', 0)}/{summary.get('environment', {}).get('http_checks', 0)}",
         "",
         "## By Evaluator",
         "",
@@ -69,6 +70,7 @@ def write_markdown_report(path: str | Path, cases: list[EvalCase], runs: list[Ag
             lines.append(f"- `{case_id}`: {'; '.join(errors)}")
 
     lines.extend(["", "## Failures", ""])
+    run_by_key = {(run.case_id, run.repeat_index): run for run in runs}
     failures = [result for result in results if not result.passed]
     if not failures:
         lines.append("No evaluation failures.")
@@ -81,5 +83,23 @@ def write_markdown_report(path: str | Path, cases: list[EvalCase], runs: list[Ag
                 f"- Reason: {result.failure_reason or 'N/A'}",
                 "",
             ])
+            env = run_by_key.get((result.case_id, result.repeat_index), AgentRun(case_id=result.case_id)).artifacts.get("environment") if run_by_key else None
+            if env:
+                diff = env.get("diff", {})
+                commands = env.get("commands", [])
+                failed_commands = [command for command in commands if command.get("timed_out") or command.get("exit_code") is None or command.get("exit_code") != 0]
+                failed_queries = [query for query in env.get("database", []) if query.get("error")]
+                failed_http = [check for check in env.get("http", []) if check.get("error") or check.get("status_code") is None]
+                lines.extend([
+                    "Environment diff:",
+                    f"- Created: {', '.join((diff.get('created') or [])[:10]) or 'None'}",
+                    f"- Modified: {', '.join((diff.get('modified') or [])[:10]) or 'None'}",
+                    f"- Deleted: {', '.join((diff.get('deleted') or [])[:10]) or 'None'}",
+                    f"- Protected violations: {', '.join((diff.get('protected_path_violations') or [])[:10]) or 'None'}",
+                    f"- Failed commands: {', '.join(command.get('command', '') for command in failed_commands[:5]) or 'None'}",
+                    f"- Failed queries: {', '.join(query.get('query', '') for query in failed_queries[:5]) or 'None'}",
+                    f"- Failed HTTP checks: {', '.join(check.get('url', '') for check in failed_http[:5]) or 'None'}",
+                    "",
+                ])
 
     Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")

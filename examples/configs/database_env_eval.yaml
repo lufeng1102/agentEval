@@ -1,0 +1,17 @@
+agent:
+  provider: static
+  static_response: "Database outcome checked."
+runner:
+  concurrency: 1
+  timeout_seconds: 60
+environment:
+  type: database
+  setup_queries:
+    - create table if not exists users (id integer primary key, name text)
+    - insert into users (name) values ('alice')
+  test_queries:
+    - select * from users where name = 'alice'
+evaluators:
+  - type: environment
+report:
+  formats: [json, markdown]

@@ -39,6 +39,7 @@ def summarize(cases: list[EvalCase], runs: list[AgentRun], results: list[EvalRes
     tool_calls = [call for run in runs for call in run.tool_calls]
     failed_tool_calls = [call for call in tool_calls if call.error]
     errors_by_case = {run.case_id: run.errors for run in runs if run.errors}
+    environment_summary = _environment_summary(runs)
 
     return {
         "cases": len(cases),
@@ -73,6 +74,7 @@ def summarize(cases: list[EvalCase], runs: list[AgentRun], results: list[EvalRes
         "by_evaluator": _summarize_groups(by_evaluator),
         "by_failure_type": _summarize_groups(by_failure_type),
         "stability": _stability(results),
+        "environment": environment_summary,
     }
 
 
@@ -84,6 +86,39 @@ def write_json_report(path: str | Path, cases: list[EvalCase], runs: list[AgentR
         "results": [result.model_dump(mode="json") for result in results],
     }
     Path(path).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _environment_summary(runs: list[AgentRun]) -> dict[str, int]:
+    sessions = [run.artifacts.get("environment") for run in runs if run.artifacts.get("environment")]
+    created = modified = deleted = protected = commands = command_failures = queries = query_failures = http_checks = http_failures = 0
+    for env in sessions:
+        diff = env.get("diff", {}) if isinstance(env, dict) else {}
+        created += len(diff.get("created") or [])
+        modified += len(diff.get("modified") or [])
+        deleted += len(diff.get("deleted") or [])
+        protected += len(diff.get("protected_path_violations") or [])
+        env_commands = env.get("commands") or []
+        commands += len(env_commands)
+        command_failures += sum(1 for command in env_commands if command.get("timed_out") or command.get("exit_code") is None or command.get("exit_code") != 0)
+        env_queries = env.get("database") or []
+        queries += len(env_queries)
+        query_failures += sum(1 for query in env_queries if query.get("error"))
+        env_http = env.get("http") or []
+        http_checks += len(env_http)
+        http_failures += sum(1 for check in env_http if check.get("error") or check.get("status_code") is None)
+    return {
+        "sessions": len(sessions),
+        "created_files": created,
+        "modified_files": modified,
+        "deleted_files": deleted,
+        "protected_path_violations": protected,
+        "commands": commands,
+        "command_failures": command_failures,
+        "queries": queries,
+        "query_failures": query_failures,
+        "http_checks": http_checks,
+        "http_failures": http_failures,
+    }
 
 
 def _summarize_groups(groups: dict[str, list[EvalResult]]) -> dict[str, dict[str, float | int]]:

@@ -1,0 +1,15 @@
+metadata:
+  name: database-environment-eval
+  description: Minimal SQLite database outcome verification example.
+cases:
+  - id: database_env_smoke
+    name: Database environment smoke
+    input: Verify that the user record exists in the isolated SQLite environment.
+    expected:
+      environment:
+        database:
+          required_rows:
+            - query: select * from users where name = 'alice'
+              min_count: 1
+          max_query_failures: 0
+    evaluators: [environment]

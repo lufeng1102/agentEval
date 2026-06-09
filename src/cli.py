@@ -12,6 +12,7 @@ from config import AppConfig, load_config, load_dataset
 from compare import compare_runs, write_compare_html, write_compare_json, write_compare_markdown
 from evaluators import build_evaluator
 from evolution.artifacts import load_run_artifacts
+from environments.analysis import analyze_environment_independence, clean_environment_workspaces, write_environment_analysis_json, write_environment_analysis_markdown, write_environment_cleanup_json, write_environment_cleanup_markdown
 from evolution.decisions import make_decision, write_decision_json, write_decision_markdown
 from evolution.diagnosis import diagnose_run_pair, write_diagnosis_json, write_diagnosis_markdown
 from evolution.failures import cluster_failures, write_failure_clusters_json, write_failure_clusters_markdown
@@ -88,6 +89,53 @@ def validate(
             typer.echo(f"Validation error: {error}", err=True)
         raise typer.Exit(code=1)
     typer.echo(f"Validation passed: {len(eval_dataset.cases)} cases, {len(app_config.evaluators)} evaluators")
+
+
+@app.command("env-validate")
+def env_validate(
+    dataset: Path = typer.Option(..., "--dataset", "-d", help="Path to YAML evaluation dataset."),
+    config: Path = typer.Option(..., "--config", "-c", help="Path to YAML run config."),
+) -> None:
+    """Validate environment harness config and case expectations without running agents."""
+    eval_dataset = load_dataset(dataset)
+    app_config = load_config(config)
+    errors = _validate_environment_config(eval_dataset.cases, app_config)
+    if errors:
+        for error in errors:
+            typer.echo(f"Environment validation error: {error}", err=True)
+        raise typer.Exit(code=1)
+    typer.echo(f"Environment validation passed: type={app_config.environment.type}, cases={len(eval_dataset.cases)}")
+
+
+@app.command("env-independence-check")
+def env_independence_check(
+    run: Path = typer.Option(..., "--run", help="Run directory containing environment.jsonl."),
+    out: Path = typer.Option(Path("runs/env-independence.md"), "--out", "-o"),
+    formats: list[str] | None = typer.Option(None, "--format"),
+) -> None:
+    """Check that environment sessions are isolated and complete."""
+    report = analyze_environment_independence(run)
+    paths = _write_report_outputs(out, report, formats or ["markdown"], write_environment_analysis_markdown, write_environment_analysis_json)
+    typer.echo(f"Environment independence passed={report['passed']}, sessions={report['sessions']}. Reports: {', '.join(str(path) for path in paths)}")
+    if not report["passed"]:
+        raise typer.Exit(code=1)
+
+
+@app.command("env-clean")
+def env_clean(
+    run: Path = typer.Option(..., "--run", help="Run directory containing envs/ workspaces."),
+    keep_failures: bool = typer.Option(False, "--keep-failures/--no-keep-failures", help="Keep workspaces for failed cases."),
+    dry_run: bool = typer.Option(True, "--dry-run/--no-dry-run", help="Only print cleanup plan without deleting."),
+    out: Path | None = typer.Option(None, "--out", "-o", help="Optional cleanup report output path."),
+    formats: list[str] | None = typer.Option(None, "--format"),
+) -> None:
+    """Clean environment workspaces while preserving environment.jsonl."""
+    report = clean_environment_workspaces(run, keep_failures=keep_failures, dry_run=dry_run)
+    if out:
+        paths = _write_report_outputs(out, report, formats or ["markdown"], write_environment_cleanup_markdown, write_environment_cleanup_json)
+        typer.echo(f"Environment cleanup planned={len(report['planned_delete'])}, deleted={len(report['deleted'])}. Reports: {', '.join(str(path) for path in paths)}")
+    else:
+        typer.echo(f"Environment cleanup planned={len(report['planned_delete'])}, deleted={len(report['deleted'])}, dry_run={report['dry_run']}")
 
 
 async def _run_async(
@@ -957,7 +1005,91 @@ def _validate_dataset_config(cases, config: AppConfig) -> list[str]:
             errors.append(f"case {case.id} uses minefield but expected.minefields is missing")
         if "rubric_judge" in selected and not case.rubric:
             errors.append(f"case {case.id} uses rubric_judge but rubric is missing")
+        if "environment" in selected and "environment" not in expected:
+            errors.append(f"case {case.id} uses environment but expected.environment is missing")
+        if "tests" in selected and "tests" not in expected:
+            errors.append(f"case {case.id} uses tests but expected.tests is missing")
+    errors.extend(_validate_environment_config(cases, config))
     return errors
+
+
+def _validate_environment_config(cases, config: AppConfig) -> list[str]:
+    errors: list[str] = []
+    env = config.environment
+    if env.type not in {"none", "filesystem", "database", "http_api"}:
+        errors.append(f"unsupported environment type: {env.type}")
+    if env.type != "none":
+        if env.command_timeout_seconds <= 0:
+            errors.append("environment.command_timeout_seconds must be greater than 0")
+        if env.max_command_output_chars < 0:
+            errors.append("environment.max_command_output_chars must be greater than or equal to 0")
+        if env.retain_workspaces not in {"always", "on_failure", "never"}:
+            errors.append("environment.retain_workspaces must be one of: always, on_failure, never")
+        for key in ["setup_commands", "test_commands", "teardown_commands"]:
+            if not _is_string_list(getattr(env, key)):
+                errors.append(f"environment.{key} must be a list of strings")
+    if env.type == "filesystem":
+        if env.isolation != "copy":
+            errors.append("filesystem environment only supports isolation=copy")
+        if env.fixture is None:
+            errors.append("filesystem environment requires environment.fixture")
+        elif not env.fixture.exists() or not env.fixture.is_dir():
+            errors.append(f"environment fixture does not exist or is not a directory: {env.fixture}")
+    if env.type == "database" and env.fixture is not None and (not env.fixture.exists() or not env.fixture.is_file()):
+        errors.append(f"database environment fixture does not exist or is not a file: {env.fixture}")
+    for case in cases:
+        case_env = case.environment or {}
+        case_type = case_env.get("type", env.type)
+        if case_type not in {"none", "filesystem", "database", "http_api"}:
+            errors.append(f"case {case.id} has unsupported environment type: {case_type}")
+        fixture = case_env.get("fixture")
+        if fixture is not None:
+            fixture_path = Path(fixture)
+            if case_type == "filesystem" and (not fixture_path.exists() or not fixture_path.is_dir()):
+                errors.append(f"case {case.id} environment fixture does not exist or is not a directory: {fixture}")
+            if case_type == "database" and (not fixture_path.exists() or not fixture_path.is_file()):
+                errors.append(f"case {case.id} database environment fixture does not exist or is not a file: {fixture}")
+        for key in ["setup_commands", "test_commands", "teardown_commands"]:
+            if key in case_env and not _is_string_list(case_env[key]):
+                errors.append(f"case {case.id} environment.{key} must be a list of strings")
+        for key in ["setup_queries", "test_queries", "teardown_queries", "setup_checks", "test_checks", "teardown_checks"]:
+            if key in case_env and not isinstance(case_env[key], list):
+                errors.append(f"case {case.id} environment.{key} must be a list")
+        selected = set(case.evaluators or {item.type for item in config.evaluators})
+        if "environment" in selected and "environment" not in case.expected:
+            errors.append(f"case {case.id} uses environment but expected.environment is missing")
+        expected_env = case.expected.get("environment", {}) if isinstance(case.expected, dict) else {}
+        for key in ["required_files", "forbidden_files", "required_modified_files", "forbidden_modified_files", "no_deleted_files", "required_command_success", "forbidden_command_failure"]:
+            if key in expected_env and not _is_string_list(expected_env[key]):
+                errors.append(f"case {case.id} expected.environment.{key} must be a list of strings")
+        for key in ["required_command_stdout", "forbidden_command_stdout"]:
+            if key in expected_env and not isinstance(expected_env[key], list):
+                errors.append(f"case {case.id} expected.environment.{key} must be a list")
+        if "max_command_failures" in expected_env and not isinstance(expected_env["max_command_failures"], int):
+            errors.append(f"case {case.id} expected.environment.max_command_failures must be an integer")
+        for section, list_keys in {"database": ["required_query_success", "required_rows", "forbidden_rows"], "http": ["required_status", "required_json_paths"]}.items():
+            if section in expected_env:
+                if not isinstance(expected_env[section], dict):
+                    errors.append(f"case {case.id} expected.environment.{section} must be an object")
+                    continue
+                for key in list_keys:
+                    if key in expected_env[section] and not isinstance(expected_env[section][key], list):
+                        errors.append(f"case {case.id} expected.environment.{section}.{key} must be a list")
+        expected_tests = case.expected.get("tests", {}) if isinstance(case.expected, dict) else {}
+        if "tests" in selected:
+            if not isinstance(expected_tests, dict):
+                errors.append(f"case {case.id} expected.tests must be an object")
+            else:
+                for key in ["fail_to_pass", "pass_to_pass"]:
+                    if key in expected_tests and not isinstance(expected_tests[key], list):
+                        errors.append(f"case {case.id} expected.tests.{key} must be a list")
+                if "max_test_failures" in expected_tests and not isinstance(expected_tests["max_test_failures"], int):
+                    errors.append(f"case {case.id} expected.tests.max_test_failures must be an integer")
+    return errors
+
+
+def _is_string_list(value) -> bool:
+    return isinstance(value, list) and all(isinstance(item, str) for item in value)
 
 
 def _build_agent(config: AppConfig):

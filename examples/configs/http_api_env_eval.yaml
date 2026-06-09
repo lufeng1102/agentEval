@@ -1,0 +1,16 @@
+agent:
+  provider: static
+  static_response: "HTTP API outcome checked."
+runner:
+  concurrency: 1
+  timeout_seconds: 60
+environment:
+  type: http_api
+  base_url: http://127.0.0.1:8000
+  test_checks:
+    - path: /health
+      expected_status: 200
+evaluators:
+  - type: environment
+report:
+  formats: [json, markdown]

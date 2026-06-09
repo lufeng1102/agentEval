@@ -109,6 +109,8 @@ def _write_html(path: str | Path, cases: list[_CaseDisplay], runs: list[AgentRun
             if run.tool_calls:
                 html.append("<h3>Tool calls</h3>")
                 html.append(_tool_calls(run.tool_calls))
+            if run.artifacts.get("environment"):
+                html.append(_environment_panel(run.artifacts["environment"]))
         html.append(_result_table(case_results))
         html.append("</div></details>")
 
@@ -192,6 +194,32 @@ def _failures(results: list[EvalResult]) -> str:
         )
     rows.append("</table></div>")
     return "\n".join(rows)
+
+
+def _environment_panel(env: dict[str, Any]) -> str:
+    diff = env.get("diff", {}) or {}
+    commands = env.get("commands", []) or []
+    failed_commands = [command for command in commands if command.get("timed_out") or command.get("exit_code") is None or command.get("exit_code") != 0]
+    failed_queries = [query for query in env.get("database", []) if query.get("error")]
+    failed_http = [check for check in env.get("http", []) if check.get("error") or check.get("status_code") is None]
+    changed = []
+    for label, key in [("Created", "created"), ("Modified", "modified"), ("Deleted", "deleted"), ("Protected", "protected_path_violations")]:
+        values = diff.get(key) or []
+        changed.append(f"<li><strong>{escape(label)}:</strong> {escape(', '.join(values[:20]) or 'None')}</li>")
+    rows = ["<div class='table-wrap'><table><tr><th>Phase</th><th>Command</th><th>Exit</th><th>Timed out</th></tr>"]
+    if not commands:
+        rows.append("<tr><td colspan='4' class='muted'>No commands.</td></tr>")
+    for command in commands:
+        rows.append(f"<tr><td>{escape(str(command.get('phase', '')))}</td><td><code>{escape(str(command.get('command', '')))}</code></td><td>{escape(str(command.get('exit_code')))}</td><td>{escape(str(command.get('timed_out', False)))}</td></tr>")
+    rows.append("</table></div>")
+    return "\n".join([
+        "<h3>Environment</h3>",
+        f"<div class='meta-row'><span>Created <strong>{len(diff.get('created') or [])}</strong></span><span>Modified <strong>{len(diff.get('modified') or [])}</strong></span><span>Deleted <strong>{len(diff.get('deleted') or [])}</strong></span><span>Protected <strong>{len(diff.get('protected_path_violations') or [])}</strong></span><span>Command failures <strong>{len(failed_commands)}</strong></span><span>Query failures <strong>{len(failed_queries)}</strong></span><span>HTTP failures <strong>{len(failed_http)}</strong></span></div>",
+        "<ul class='issue-list'>",
+        *changed,
+        "</ul>",
+        *rows,
+    ])
 
 
 def _result_table(results: list[EvalResult]) -> str:

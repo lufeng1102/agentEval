@@ -22,6 +22,8 @@ AgentEval is a Python evaluation platform for self-evolving / RSI (recursive sel
   - `state`
   - `minefield`
   - `cost`
+  - `environment`
+  - `tests`
 - Optional Claude-powered `rubric_judge` evaluator.
 - Foundational LLM judge metrics for DeepEval-style quality checks:
   - `answer_relevancy`
@@ -76,6 +78,15 @@ AgentEval is a Python evaluation platform for self-evolving / RSI (recursive sel
   - `diff-risk` for deterministic semantic risk classification of self-modification manifests
   - `integrity-check` for artifact completeness and eval-tampering checks before promotion
   - `rsi-decision` for combining promotion gates with RSI governance reports into an explainable release decision
+- Environment Harness P0 for agentic outcome verification:
+  - isolated filesystem workspaces copied from fixtures per case repeat
+  - before/after file snapshots and created/modified/deleted diffs
+  - protected path violation detection
+  - SQLite `database` environments with per-trial database copies and query result assertions
+  - lightweight `http_api` environments with status/body/JSON checks against local or test services
+  - command/test outcome recording for setup/test/teardown phases
+  - `environment.jsonl` artifacts and environment summaries in reports
+  - `environment` evaluator, coding-agent `tests` evaluator, and `env-validate` CLI
 - Multi-config batch execution with `matrix`.
 - Prompt hash/version and agent version deltas in run manifests/comparisons.
 - pass@k/pass_all stability metrics for repeated runs.
@@ -107,6 +118,7 @@ Core modules:
 | Runner | `src/runners/executor.py` | Executes cases with concurrency, timeout, retries, and repeats; writes `traces.jsonl` and `results.jsonl`. |
 | Evaluators | `src/evaluators/` | Score agent runs against expected facts, safety policy, JSON schema, regex, trajectory, state, cost, and other assertions. |
 | Reporters | `src/reporters/` | Summarize runs/results into JSON, Markdown, and HTML reports. |
+| Environment | `src/environments/` | Prepares isolated filesystem workspaces, snapshots before/after state, computes file diffs, and records environment artifacts for agentic outcome evaluation. |
 | Comparison | `src/compare.py`, `src/matrix.py` | Compare runs and execute one dataset against multiple configs. |
 
 The key design decision is separation of concerns:
@@ -129,16 +141,19 @@ A normal `run` command follows this sequence:
 5. Expand cases by `runner.repeats` for stability testing.
 6. Execute cases concurrently, limited by `runner.concurrency`.
 7. For each case:
+   - prepare an isolated environment workspace when `environment.type` is enabled;
    - apply case-level or runner-level timeout;
-   - call the agent adapter;
+   - call the agent adapter with `RunContext.environment` pointing at the workspace;
    - capture an `AgentRun` with output, tool calls, usage, latency, artifacts, and errors;
+   - snapshot the environment after the run and attach diff artifacts;
    - retry according to `runner.retries` if the adapter raises.
 8. Write all agent runs to `traces.jsonl`.
-9. Run selected evaluators against each `EvalCase` + `AgentRun` pair.
-10. Write evaluator outputs to `results.jsonl`.
-11. Generate requested reports: `report.json`, `report.md`, `report.html`.
-12. Write `manifest.json` with run metadata.
-13. Enforce optional CI thresholds: `--min-pass-rate`, `--min-score`, `--fail-on-error`.
+9. Write environment sessions to `environment.jsonl` when an environment is enabled.
+10. Run selected evaluators against each `EvalCase` + `AgentRun` pair.
+11. Write evaluator outputs to `results.jsonl`.
+12. Generate requested reports: `report.json`, `report.md`, `report.html`.
+13. Write `manifest.json` with run metadata.
+14. Enforce optional CI thresholds: `--min-pass-rate`, `--min-score`, `--fail-on-error`.
 
 If an agent call fails after all retries, the runner still records an `AgentRun` with `errors` instead of stopping the whole suite. This keeps large evaluation suites debuggable and allows reports to show both behavioral failures and infrastructure/API failures.
 
@@ -175,6 +190,7 @@ Each case maps to `EvalCase`:
 | `name` | No | string | Human-readable case name for reports. |
 | `expected` | No | object | Evaluator-specific assertions. Examples: `required_facts`, `should_refuse`, `regex`, `json_schema`, `required_tools`, `final_state`. |
 | `scenario` | No | object | Optional runtime setup, such as scripted user turns, mock tools, or initial state. |
+| `environment` | No | object | Optional per-case environment override, such as a different filesystem fixture, SQLite database fixture, HTTP base URL, protected paths, commands, queries, or checks. |
 | `rubric` | No | string | Natural-language grading guidance, used by LLM-as-judge evaluators. |
 | `tags` | No | list[string] | Labels for grouped reporting, e.g. `safety`, `tool-use`, `factuality`. |
 | `metadata` | No | object | Extra user-defined metadata. |
@@ -202,6 +218,8 @@ Each case maps to `EvalCase`:
 | `tool_outputs` | `tool_output` | Expected mock tool outputs. |
 | `final_state` | `state` | Required state after the run. |
 | `forbidden_state` | `state`, `minefield` | State values that must not be reached. |
+| `environment` | `environment` | File/command/database/HTTP outcome assertions, such as required files, successful test commands, SQLite rows, or HTTP JSON paths. |
+| `tests` | `tests` | Coding-agent fail-to-pass/pass-to-pass test command gates backed by environment `test_commands`. |
 | `minefields` | `minefield` | Forbidden tools, outputs, arguments, or state mutations. |
 
 ### Config protocol
@@ -235,6 +253,7 @@ Top-level config fields:
 | `agent` | object | Adapter configuration for the evaluated system. |
 | `runner` | object | Concurrency, timeout, retry, and repeat behavior. |
 | `evaluators` | list[object] | Evaluators available for this run. Case-level `evaluators` can select from this list. |
+| `environment` | object | Optional outcome-verification environment. Built-ins: `none`, `filesystem`, `database`, `http_api`. |
 | `report` | object | Output report formats. |
 
 `agent` fields:
@@ -1343,6 +1362,159 @@ eval_integrity:
 ```
 
 For stricter CI, run `diff-risk --fail-on-review`, `integrity-check`, and then `rsi-decision --fail-on-review` after baseline/candidate reports are available. This blocks not only quality regressions, but also suspicious self-modifications that require human approval before promotion.
+
+## Environment Harness P0
+
+Agent evaluations can run each case repeat inside an isolated outcome-verification environment. The current harness supports:
+
+- `filesystem`: copies a fixture directory into `runs/<run>/envs/<case_id>/<repeat>/workspace`, runs optional setup/test/teardown commands, snapshots files before and after the agent run, computes created/modified/deleted files, and records protected path violations.
+- `database`: creates an isolated SQLite database per trial, optionally copied from a fixture file, and records setup/test/teardown query results.
+- `http_api`: runs lightweight HTTP checks against a configured local/test service and records status, body, parsed JSON, and errors.
+
+All environment records are stored in both `environment.jsonl` and `AgentRun.artifacts.environment`.
+
+Example filesystem config:
+
+```yaml
+environment:
+  type: filesystem
+  fixture: examples/envs/filesystem_task
+  isolation: copy
+  reset_between_trials: true
+  protected_paths:
+    - tests/**
+  setup_commands: []
+  test_commands:
+    - python -c "from pathlib import Path; assert Path('src/auth.py').exists()"
+  teardown_commands: []
+  command_timeout_seconds: 120
+  max_command_output_chars: 20000
+evaluators:
+  - type: environment
+  - type: tests
+```
+
+Example dataset expectations:
+
+```yaml
+cases:
+  - id: filesystem_env_smoke
+    input: "Inspect the copied workspace and update src/auth.py if needed."
+    expected:
+      environment:
+        required_files:
+          - src/auth.py
+        required_modified_files:
+          - src/auth.py
+        forbidden_modified_files:
+          - tests/**
+        max_modified_files: 3
+        required_command_success:
+          - python -c "from pathlib import Path; assert Path('src/auth.py').exists()"
+        required_test_success: true
+        max_command_failures: 0
+      tests:
+        fail_to_pass:
+          - command: python -c "from pathlib import Path; assert Path('src/auth.py').exists()"
+        require_all_test_commands_pass: true
+        max_test_failures: 0
+    evaluators: [environment, tests]
+```
+
+Database outcome example:
+
+```yaml
+environment:
+  type: database
+  setup_queries:
+    - create table if not exists users (id integer primary key, name text)
+    - insert into users (name) values ('alice')
+  test_queries:
+    - select * from users where name = 'alice'
+```
+
+```yaml
+expected:
+  environment:
+    database:
+      required_rows:
+        - query: select * from users where name = 'alice'
+          min_count: 1
+      max_query_failures: 0
+```
+
+HTTP API outcome example:
+
+```yaml
+environment:
+  type: http_api
+  base_url: http://127.0.0.1:8000
+  test_checks:
+    - path: /health
+      expected_status: 200
+```
+
+```yaml
+expected:
+  environment:
+    http:
+      required_status:
+        - path: /health
+          status: 200
+      required_json_paths:
+        - path: /health
+          json_path: status
+          value: ok
+      max_http_failures: 0
+```
+
+Validate the environment config without running agents:
+
+```bash
+PYTHONPATH=src python -m cli env-validate \
+  --dataset examples/datasets/filesystem_env.yaml \
+  --config examples/configs/filesystem_env_eval.yaml
+```
+
+Run an environment-backed evaluation:
+
+```bash
+PYTHONPATH=src python -m cli run \
+  --dataset examples/datasets/filesystem_env.yaml \
+  --config examples/configs/filesystem_env_eval.yaml \
+  --out runs/env-smoke
+```
+
+The run writes normal AgentEval artifacts plus:
+
+```text
+runs/env-smoke/environment.jsonl
+runs/env-smoke/envs/<case_id>/<repeat_index>/workspace/
+```
+
+Check trial isolation and artifact completeness:
+
+```bash
+PYTHONPATH=src python -m cli env-independence-check \
+  --run runs/env-smoke \
+  --out runs/env-smoke/env-independence.md
+```
+
+Clean copied workspaces while keeping `environment.jsonl`:
+
+```bash
+PYTHONPATH=src python -m cli env-clean \
+  --run runs/env-smoke \
+  --dry-run
+
+PYTHONPATH=src python -m cli env-clean \
+  --run runs/env-smoke \
+  --no-dry-run
+```
+
+Use `--keep-failures` to retain workspaces for failed cases during cleanup.
+
+The `environment` evaluator supports file assertions (`required_files`, `forbidden_files`, `required_modified_files`, `forbidden_modified_files`, `max_modified_files`, `no_deleted_files`), command assertions (`required_setup_success`, `required_test_success`, `required_teardown_success`, `required_command_success`, `required_command_stdout`, `forbidden_command_stdout`, `forbidden_command_failure`, `max_command_failures`), SQLite query assertions (`database.required_rows`, `database.forbidden_rows`, `database.required_query_success`, `database.max_query_failures`), and HTTP assertions (`http.required_status`, `http.required_json_paths`, `http.max_http_failures`). Command output and HTTP bodies are captured in `environment.jsonl` and truncated by `max_command_output_chars`. The `tests` evaluator reads phase=`test` commands from environment artifacts and provides coding-agent fail-to-pass/pass-to-pass gates via `expected.tests.fail_to_pass`, `expected.tests.pass_to_pass`, `require_all_test_commands_pass`, and `max_test_failures`. The harness intentionally avoids Docker, browser automation, and complex service orchestration for now; those are planned as future Environment Harness extensions.
 
 ## Matrix runs
 

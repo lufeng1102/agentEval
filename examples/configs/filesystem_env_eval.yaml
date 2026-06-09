@@ -1,0 +1,21 @@
+agent:
+  provider: static
+  static_response: "Environment fixture copied. No workspace changes made by the static adapter."
+runner:
+  concurrency: 1
+  timeout_seconds: 60
+  repeats: 1
+environment:
+  type: filesystem
+  fixture: examples/envs/filesystem_task
+  isolation: copy
+  reset_between_trials: true
+  protected_paths:
+    - tests/**
+  test_commands:
+    - python -c "from pathlib import Path; assert Path('src/auth.py').exists()"
+evaluators:
+  - type: environment
+  - type: tests
+report:
+  formats: [json, markdown]
