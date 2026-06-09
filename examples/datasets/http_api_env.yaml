@@ -1,0 +1,19 @@
+metadata:
+  name: http-api-environment-eval
+  description: Minimal HTTP API outcome verification example. Start a local service that returns JSON at /health before running this sample.
+cases:
+  - id: http_api_env_smoke
+    name: HTTP API environment smoke
+    input: Verify that the health endpoint returns the expected status.
+    expected:
+      environment:
+        http:
+          required_status:
+            - path: /health
+              status: 200
+          required_json_paths:
+            - path: /health
+              json_path: status
+              value: ok
+          max_http_failures: 0
+    evaluators: [environment]

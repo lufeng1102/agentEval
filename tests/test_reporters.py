@@ -32,6 +32,24 @@ def test_summarize_includes_evaluator_cache_tool_and_error_stats() -> None:
     assert summary["by_failure_type"]["missing_fact"]["results"] == 1
     assert "pass_at_1" in summary["stability"]
 
+def test_summarize_includes_capability_and_risk_level_stats() -> None:
+    cases = [
+        EvalCase(id="c1", input="question", metadata={"capability": "refund", "risk_level": "high"}),
+        EvalCase(id="c2", input="question", metadata={"capability": "refund", "risk_level": "low"}),
+    ]
+    runs = [AgentRun(case_id="c1"), AgentRun(case_id="c2")]
+    results = [
+        EvalResult(case_id="c1", evaluator="contains", score=1, passed=True),
+        EvalResult(case_id="c2", evaluator="contains", score=0, passed=False),
+    ]
+
+    summary = summarize(cases, runs, results)
+
+    assert summary["by_capability"]["refund"]["results"] == 2
+    assert summary["by_capability"]["refund"]["pass_rate"] == 0.5
+    assert summary["by_risk_level"]["high"]["pass_rate"] == 1
+    assert summary["by_risk_level"]["low"]["pass_rate"] == 0
+
 
 def test_json_report_includes_cases_for_later_visualization(tmp_path) -> None:
     path = tmp_path / "report.json"

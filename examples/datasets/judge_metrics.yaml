@@ -1,0 +1,102 @@
+metadata:
+  name: judge-metrics-smoke
+cases:
+  - id: answer_relevancy_case
+    input: What is the refund deadline?
+    expected:
+      answer: Refund requests must be made within 30 days.
+      judge_metrics:
+        answer_relevancy:
+          score: 0.92
+          passed: true
+          reason: Directly answers the refund deadline question.
+          metrics:
+            relevancy_score: 0.92
+    evaluators: [answer_relevancy]
+
+  - id: rag_faithfulness_case
+    input: What is the refund deadline?
+    expected:
+      retrieval_context:
+        - Customers may request refunds within 30 days of purchase.
+      required_facts:
+        - Refunds must be requested within 30 days.
+      forbidden_claims:
+        - Refunds are always guaranteed.
+      judge_metrics:
+        faithfulness:
+          score: 0.9
+          passed: true
+          reason: The answer is supported by the provided refund policy context.
+          metrics:
+            unsupported_claims: []
+        context_relevancy:
+          score: 0.95
+          passed: true
+          reason: The retrieved context is relevant to the refund question.
+          metrics:
+            relevant_context_count: 1
+            irrelevant_context_count: 0
+        context_precision:
+          score: 1.0
+          passed: true
+          reason: All retrieved context is useful for answering the question.
+          metrics:
+            useful_context_count: 1
+            total_context_count: 1
+        context_recall:
+          score: 1.0
+          passed: true
+          reason: The retrieved context covers the required refund deadline fact.
+          metrics:
+            covered_facts:
+              - Refunds must be requested within 30 days.
+            uncovered_facts: []
+        hallucination:
+          score: 1.0
+          passed: true
+          reason: The answer contains no unsupported or forbidden claims.
+          metrics:
+            unsupported_claims: []
+            forbidden_claims_present: []
+    evaluators: [faithfulness, context_relevancy, context_precision, context_recall, hallucination]
+
+  - id: task_completion_case
+    input: Explain refund eligibility and the deadline.
+    expected:
+      task:
+        goal: Explain refund eligibility and deadline.
+        success_criteria:
+          - Mentions the 30 day deadline.
+          - Does not guarantee approval.
+      judge_metrics:
+        task_completion:
+          score: 0.86
+          passed: true
+          reason: The answer completes the main refund task.
+          metrics:
+            missing_criteria: []
+    evaluators: [task_completion]
+
+  - id: conversation_quality_case
+    input:
+      - role: user
+        content: I am angry about my refund.
+      - role: assistant
+        content: I can help with that.
+      - role: user
+        content: What do you need from me?
+    expected:
+      conversation:
+        expected_behaviors:
+          - Acknowledges user frustration.
+          - Asks for order information.
+      judge_metrics:
+        conversation_quality:
+          score: 0.88
+          passed: true
+          reason: The assistant maintains helpful tone and asks for required information.
+          metrics:
+            missing_behaviors: []
+            tone_issues: []
+    evaluators: [conversation_quality]

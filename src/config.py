@@ -12,6 +12,8 @@ from expected_files import resolve_expected_files
 
 class AgentConfig(BaseModel):
     provider: str = "static"
+    id: str | None = None
+    version: str | None = None
     model: str = "claude-opus-4-8"
     system: str | None = None
     temperature: float | None = None
@@ -21,6 +23,10 @@ class AgentConfig(BaseModel):
     cache_control: dict[str, Any] | None = None
     cache_system_prompt: bool = False
     prompt_version: str | None = None
+    toolset_version: str | None = None
+    policy_version: str | None = None
+    memory_version: str | None = None
+    component_hashes: dict[str, str] = Field(default_factory=dict)
     static_response: str | None = None
     static_tool_calls: list[ToolCall] = Field(default_factory=list)
     static_latency_ms: float | None = None
@@ -33,6 +39,31 @@ class RunnerConfig(BaseModel):
     timeout_seconds: float = 120
     retries: int = 0
     repeats: int = 1
+
+
+class EnvironmentConfig(BaseModel):
+    type: str = "none"
+    fixture: Path | None = None
+    isolation: str = "copy"
+    reset_between_trials: bool = True
+    keep_on_failure: bool = True
+    include_patterns: list[str] = Field(default_factory=lambda: ["**/*"])
+    exclude_patterns: list[str] = Field(default_factory=lambda: [".git/**", "__pycache__/**", ".pytest_cache/**", "node_modules/**"])
+    protected_paths: list[str] = Field(default_factory=list)
+    setup_commands: list[str] = Field(default_factory=list)
+    test_commands: list[str] = Field(default_factory=list)
+    teardown_commands: list[str] = Field(default_factory=list)
+    setup_queries: list[Any] = Field(default_factory=list)
+    test_queries: list[Any] = Field(default_factory=list)
+    teardown_queries: list[Any] = Field(default_factory=list)
+    base_url: str | None = None
+    setup_checks: list[dict[str, Any]] = Field(default_factory=list)
+    test_checks: list[dict[str, Any]] = Field(default_factory=list)
+    teardown_checks: list[dict[str, Any]] = Field(default_factory=list)
+    database_path: str | None = None
+    command_timeout_seconds: float = 120
+    max_command_output_chars: int = 20000
+    retain_workspaces: str = "always"
 
 
 class EvaluatorConfig(BaseModel):
@@ -49,6 +80,7 @@ class ReportConfig(BaseModel):
 class AppConfig(BaseModel):
     agent: AgentConfig = Field(default_factory=AgentConfig)
     runner: RunnerConfig = Field(default_factory=RunnerConfig)
+    environment: EnvironmentConfig = Field(default_factory=EnvironmentConfig)
     evaluators: list[EvaluatorConfig] = Field(default_factory=lambda: [EvaluatorConfig(type="contains")])
     report: ReportConfig = Field(default_factory=ReportConfig)
 

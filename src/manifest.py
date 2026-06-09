@@ -19,6 +19,7 @@ def build_manifest(dataset_path: str | Path | None, config_path: str | Path | No
         "config_hash": file_sha256(config_path) if config_path else None,
         "prompt_version": config.agent.prompt_version,
         "prompt_hash": prompt_hash(config),
+        "agent_version": agent_version_snapshot(config),
         "agenteval_version": "0.1.0",
         "python_version": platform.python_version(),
         "platform": platform.platform(),
@@ -26,6 +27,20 @@ def build_manifest(dataset_path: str | Path | None, config_path: str | Path | No
         "runner": config.runner.model_dump(mode="json"),
         "evaluators": [item.model_dump(mode="json") for item in config.evaluators],
         "report": config.report.model_dump(mode="json"),
+    }
+
+
+def agent_version_snapshot(config: AppConfig) -> dict[str, Any]:
+    return {
+        "agent_id": config.agent.id,
+        "version": config.agent.version,
+        "provider": config.agent.provider,
+        "model": config.agent.model,
+        "prompt_version": config.agent.prompt_version,
+        "toolset_version": config.agent.toolset_version,
+        "policy_version": config.agent.policy_version,
+        "memory_version": config.agent.memory_version,
+        "component_hashes": dict(config.agent.component_hashes),
     }
 
 

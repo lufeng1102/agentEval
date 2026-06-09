@@ -12,8 +12,12 @@ def summarize(cases: list[EvalCase], runs: list[AgentRun], results: list[EvalRes
     avg_score = sum(result.score for result in results) / len(results) if results else 0
     latencies = sorted(run.latency_ms for run in runs)
     case_tags = {case.id: case.tags for case in cases}
+    case_capabilities = {case.id: str(case.metadata.get("capability")) for case in cases if case.metadata.get("capability")}
+    case_risk_levels = {case.id: str(case.metadata.get("risk_level")) for case in cases if case.metadata.get("risk_level")}
 
     by_tag: dict[str, list[EvalResult]] = defaultdict(list)
+    by_capability: dict[str, list[EvalResult]] = defaultdict(list)
+    by_risk_level: dict[str, list[EvalResult]] = defaultdict(list)
     by_evaluator: dict[str, list[EvalResult]] = defaultdict(list)
     by_failure_type: dict[str, list[EvalResult]] = defaultdict(list)
     for result in results:
@@ -22,6 +26,10 @@ def summarize(cases: list[EvalCase], runs: list[AgentRun], results: list[EvalRes
             by_failure_type[result.failure_type].append(result)
         for tag in case_tags.get(result.case_id, []):
             by_tag[tag].append(result)
+        if result.case_id in case_capabilities:
+            by_capability[case_capabilities[result.case_id]].append(result)
+        if result.case_id in case_risk_levels:
+            by_risk_level[case_risk_levels[result.case_id]].append(result)
 
     input_tokens = sum(run.usage.input_tokens for run in runs)
     output_tokens = sum(run.usage.output_tokens for run in runs)
@@ -31,6 +39,7 @@ def summarize(cases: list[EvalCase], runs: list[AgentRun], results: list[EvalRes
     tool_calls = [call for run in runs for call in run.tool_calls]
     failed_tool_calls = [call for call in tool_calls if call.error]
     errors_by_case = {run.case_id: run.errors for run in runs if run.errors}
+    environment_summary = _environment_summary(runs)
 
     return {
         "cases": len(cases),
@@ -60,9 +69,12 @@ def summarize(cases: list[EvalCase], runs: list[AgentRun], results: list[EvalRes
             "by_case": errors_by_case,
         },
         "by_tag": _summarize_groups(by_tag),
+        "by_capability": _summarize_groups(by_capability),
+        "by_risk_level": _summarize_groups(by_risk_level),
         "by_evaluator": _summarize_groups(by_evaluator),
         "by_failure_type": _summarize_groups(by_failure_type),
         "stability": _stability(results),
+        "environment": environment_summary,
     }
 
 
@@ -74,6 +86,39 @@ def write_json_report(path: str | Path, cases: list[EvalCase], runs: list[AgentR
         "results": [result.model_dump(mode="json") for result in results],
     }
     Path(path).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _environment_summary(runs: list[AgentRun]) -> dict[str, int]:
+    sessions = [run.artifacts.get("environment") for run in runs if run.artifacts.get("environment")]
+    created = modified = deleted = protected = commands = command_failures = queries = query_failures = http_checks = http_failures = 0
+    for env in sessions:
+        diff = env.get("diff", {}) if isinstance(env, dict) else {}
+        created += len(diff.get("created") or [])
+        modified += len(diff.get("modified") or [])
+        deleted += len(diff.get("deleted") or [])
+        protected += len(diff.get("protected_path_violations") or [])
+        env_commands = env.get("commands") or []
+        commands += len(env_commands)
+        command_failures += sum(1 for command in env_commands if command.get("timed_out") or command.get("exit_code") is None or command.get("exit_code") != 0)
+        env_queries = env.get("database") or []
+        queries += len(env_queries)
+        query_failures += sum(1 for query in env_queries if query.get("error"))
+        env_http = env.get("http") or []
+        http_checks += len(env_http)
+        http_failures += sum(1 for check in env_http if check.get("error") or check.get("status_code") is None)
+    return {
+        "sessions": len(sessions),
+        "created_files": created,
+        "modified_files": modified,
+        "deleted_files": deleted,
+        "protected_path_violations": protected,
+        "commands": commands,
+        "command_failures": command_failures,
+        "queries": queries,
+        "query_failures": query_failures,
+        "http_checks": http_checks,
+        "http_failures": http_failures,
+    }
 
 
 def _summarize_groups(groups: dict[str, list[EvalResult]]) -> dict[str, dict[str, float | int]]:

@@ -1,0 +1,13 @@
+attribution:
+  baseline:
+    run_dir: runs/baseline
+  candidates:
+    - id: prompt_only
+      run_dir: runs/prompt-only
+      changed_components: [prompt]
+    - id: toolset_only
+      run_dir: runs/toolset-only
+      changed_components: [toolset]
+    - id: full
+      run_dir: runs/full
+      changed_components: [prompt, toolset]

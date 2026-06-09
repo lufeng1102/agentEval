@@ -1,0 +1,6 @@
+holdout_suite:
+  known_run: runs/regression
+  holdout_run: runs/holdout
+  min_holdout_pass_rate: 0.85
+  max_generalization_gap: 0.15
+  report_aggregate_only: true

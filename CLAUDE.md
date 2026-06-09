@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project overview
 
-AgentEval is a Python evaluation framework for Claude/LLM agents. It separates evaluation datasets, run configs, agent adapters, execution traces, evaluators, reports, and CI thresholds so agent behavior can be tested locally or in CI.
+AgentEval is a Python evaluation platform for self-evolving / RSI (recursive self-improvement) Claude/LLM agents. It separates evaluation datasets, run configs, agent adapters, execution traces, evaluators, reports, CI thresholds, evolution diagnostics, and RSI safety governance so agent behavior and self-modifications can be tested locally or in CI.
 
 The central data flow is:
 
@@ -95,6 +95,36 @@ PYTHONPATH=src python -m cli compare \
   --fail-on-new-failures
 ```
 
+Mine failures, generate regressions, and apply promotion gates:
+
+```bash
+PYTHONPATH=src python -m cli failures \
+  --run runs/pr \
+  --out runs/pr/failures \
+  --format markdown \
+  --format json
+
+PYTHONPATH=src python -m cli regressions \
+  --run runs/pr \
+  --out runs/pr/regressions.yaml
+
+PYTHONPATH=src python -m cli regressions \
+  --run runs/pr \
+  --append-to datasets/regressions/support.yaml \
+  --dedupe
+
+PYTHONPATH=src python -m cli promote \
+  --baseline runs/main \
+  --candidate runs/pr \
+  --policy examples/policies/promotion.yaml \
+  --out runs/promotion \
+  --format markdown \
+  --format json
+
+PYTHONPATH=src python -m cli experiment \
+  --spec examples/experiments/self_evolution.yaml
+```
+
 Run a matrix of configs against one dataset:
 
 ```bash
@@ -113,9 +143,11 @@ CI currently installs with `pip install -e '.[dev]'`, runs `python -m pytest`, t
 - `src/cli.py` is the orchestration entry point. It loads dataset/config, builds the agent adapter from `agent.provider`, builds evaluator instances, writes `manifest.json`, emits reports, and enforces CLI thresholds.
 - `src/runners/executor.py` is responsible for concurrency, per-case timeout, retries, repeats, writing `traces.jsonl`, and writing `results.jsonl`. Adapter exceptions are converted into `AgentRun.errors` so the full suite can continue.
 - `src/agents/base.py` defines the adapter protocol. Built-ins are `static` and `anthropic`; new providers should return a complete `AgentRun` rather than exposing provider-specific response shapes to evaluators.
-- `src/evaluators/__init__.py` is the evaluator factory. Built-ins include `contains`, `exact_match`, `trajectory`, `safety`, `json_schema`, `regex`, `tool_output`, `cost`, `minefield`, `state`, `trajectory_judge`, `rubric_judge`, and imported plugin evaluators.
+- `src/evaluators/__init__.py` is the evaluator factory. Built-ins include `contains`, `exact_match`, `trajectory`, `safety`, `json_schema`, `regex`, `tool_output`, `cost`, `minefield`, `state`, `trajectory_judge`, `rubric_judge`, foundational judge metrics (`answer_relevancy`, `faithfulness`, `context_relevancy`, `context_precision`, `context_recall`, `task_completion`, `hallucination`, `conversation_quality`), and imported plugin evaluators.
 - `src/reporters/` summarizes cases, runs, and evaluator results into `report.json`, `report.md`, and `report.html`. `report.json` is the machine-readable artifact for automation.
 - `src/compare.py` and the `matrix` command compare existing run directories by reading their reports; they do not rerun agents except when the matrix command creates its per-config runs.
+- `src/evolution/` and `src/promotion.py` power the self-evolution loop: failure mining, regression dataset generation, manifest version deltas, and promotion policy gates.
+- `src/rsi/` contains RSI-specific governance analyzers for self-modification review, safety envelope/eval integrity, anti-gaming and holdout analysis, capability frontier tracking, attribution, evolution-loop metrics, memory pollution, action risk, and RSI red teaming.
 
 ## Core data contracts
 
@@ -124,7 +156,12 @@ A dataset is a YAML object with `metadata` and `cases`. Each case maps to `EvalC
 `expected` is evaluator-specific. Common fields are:
 
 - `answer` for `exact_match`
-- `required_facts` for `contains` and judge evaluators
+- `required_facts` for `contains`, RAG recall, and judge evaluators
+- `retrieval_context` / `expected_context` for `faithfulness`, `context_relevancy`, `context_precision`, `context_recall`, and `hallucination`
+- `forbidden_claims` for `hallucination`
+- `task.goal` and `task.success_criteria` for `task_completion`
+- `conversation.expected_behaviors` for `conversation_quality`
+- `judge_metrics.<metric_name>` for deterministic mock judgements in offline tests/examples
 - `should_refuse` and `forbidden_terms` for `safety`
 - `json_schema` for `json_schema`
 - `regex.include` / `regex.exclude` for `regex`

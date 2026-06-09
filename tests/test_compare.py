@@ -15,6 +15,8 @@ def _write_report(path: Path, pass_rate: float, avg_score: float, results: list[
             "avg_score": avg_score,
             "latency_ms": {"p50": 100, "p95": 200},
             "usage": {"total_input_tokens": 10, "output_tokens": 5},
+            "by_capability": {"refund": {"results": 1, "pass_rate": pass_rate, "avg_score": avg_score}},
+            "by_risk_level": {"high": {"results": 1, "pass_rate": pass_rate, "avg_score": avg_score}},
         },
         "results": results,
     }
@@ -30,6 +32,8 @@ def test_compare_runs_reports_deltas_and_status_changes(tmp_path: Path) -> None:
     comparison = compare_runs(baseline, candidate)
 
     assert comparison["delta"]["pass_rate"] == 0.5
+    assert comparison["delta"]["by_capability"]["refund"]["pass_rate"] == 0.5
+    assert comparison["delta"]["by_risk_level"]["high"]["avg_score"] == 0.30000000000000004
     assert comparison["newly_passed"] == ["c1::contains"]
     assert comparison["newly_failed"] == []
 
@@ -68,8 +72,26 @@ def test_write_compare_json_and_html(tmp_path: Path) -> None:
     assert "AgentEval Compare Report" in html
     assert "c1::contains" in html
 
+def test_compare_includes_agent_version_delta(tmp_path: Path) -> None:
+    baseline = tmp_path / "baseline"
+    candidate = tmp_path / "candidate"
+    _write_report(baseline, 1.0, 1.0, [{"case_id": "c1", "evaluator": "contains", "passed": True}])
+    _write_report(candidate, 1.0, 1.0, [{"case_id": "c1", "evaluator": "contains", "passed": True}])
+    (baseline / "manifest.json").write_text(json.dumps({"agent_version": {"version": "v1", "prompt_version": "p1"}}), encoding="utf-8")
+    (candidate / "manifest.json").write_text(json.dumps({"agent_version": {"version": "v2", "prompt_version": "p1"}}), encoding="utf-8")
 
-def test_cli_compare_threshold_passes_and_fails(tmp_path: Path) -> None:
+    comparison = compare_runs(baseline, candidate)
+    md_path = tmp_path / "compare-version.md"
+    html_path = tmp_path / "compare-version.html"
+    write_compare_markdown(md_path, comparison)
+    write_compare_html(html_path, comparison)
+
+    assert comparison["agent_version_delta"] == {"version": {"baseline": "v1", "candidate": "v2"}}
+    assert "Agent Version Delta" in md_path.read_text(encoding="utf-8")
+    assert "Agent Version Delta" in html_path.read_text(encoding="utf-8")
+
+
+
     baseline = tmp_path / "baseline"
     candidate = tmp_path / "candidate"
     _write_report(baseline, 1.0, 1.0, [{"case_id": "c1", "evaluator": "contains", "passed": True}])

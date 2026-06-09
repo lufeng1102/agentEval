@@ -5,6 +5,7 @@ import importlib
 from config import EvaluatorConfig
 from evaluators.base import Evaluator
 from evaluators.cost import CostEvaluator
+from evaluators.environment import EnvironmentEvaluator
 from evaluators.exact_match import ContainsEvaluator, ExactMatchEvaluator
 from evaluators.json_schema import JsonSchemaEvaluator
 from evaluators.minefield import MinefieldEvaluator
@@ -14,9 +15,15 @@ from evaluators.state import StateEvaluator
 from evaluators.tool_output import ToolOutputEvaluator
 from evaluators.trajectory import TrajectoryEvaluator
 from evaluators.trajectory_judge import TrajectoryJudgeEvaluator
+from evaluators.tests import TestsEvaluator
+from evaluators.judge_metrics import JUDGE_METRIC_TYPES, JudgeMetricEvaluator
 
 
 def build_evaluator(config: EvaluatorConfig) -> Evaluator:
+    if config.type == "environment":
+        return EnvironmentEvaluator()
+    if config.type == "tests":
+        return TestsEvaluator()
     if config.type == "contains":
         return ContainsEvaluator()
     if config.type == "exact_match":
@@ -39,6 +46,8 @@ def build_evaluator(config: EvaluatorConfig) -> Evaluator:
         return StateEvaluator()
     if config.type == "trajectory_judge":
         return TrajectoryJudgeEvaluator(config)
+    if config.type in JUDGE_METRIC_TYPES:
+        return JudgeMetricEvaluator(config, config.type)
     if config.type in {"import", "plugin"}:
         return _build_imported_evaluator(config)
     if config.type == "rubric_judge":
@@ -67,6 +76,7 @@ __all__ = [
     "Evaluator",
     "ContainsEvaluator",
     "CostEvaluator",
+    "EnvironmentEvaluator",
     "ExactMatchEvaluator",
     "JsonSchemaEvaluator",
     "MinefieldEvaluator",
@@ -76,5 +86,7 @@ __all__ = [
     "ToolOutputEvaluator",
     "TrajectoryEvaluator",
     "TrajectoryJudgeEvaluator",
+    "TestsEvaluator",
+    "JudgeMetricEvaluator",
     "build_evaluator",
 ]

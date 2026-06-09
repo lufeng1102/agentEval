@@ -24,6 +24,7 @@ class EvalCase(BaseModel):
     name: str | None = None
     expected: dict[str, Any] = Field(default_factory=dict)
     scenario: dict[str, Any] = Field(default_factory=dict)
+    environment: dict[str, Any] = Field(default_factory=dict)
     rubric: str | None = None
     tags: list[str] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -134,3 +135,4 @@ class RunContext(BaseModel):
 
     output_dir: Path
     config: dict[str, Any] = Field(default_factory=dict)
+    environment: dict[str, Any] | None = None
