@@ -26,7 +26,10 @@ from evolution.regression_status import mark_regression, summarize_regressions, 
 from evolution.regressions import append_regression_dataset, generate_regression_dataset, write_regression_dataset
 from manifest import build_manifest, write_manifest
 from promotion import evaluate_promotion, load_promotion_policy, write_promotion_json, write_promotion_markdown
+from production import analyze_production_coverage, ingest_feedback, ingest_production_events, load_production_events, load_user_feedback, production_feedback_to_regressions, summarize_production, write_coverage_json, write_coverage_markdown, write_feedback_json, write_feedback_markdown, write_production_json, write_production_jsonl, write_production_markdown
+from production.regressions import append_production_regressions, write_production_regressions
 from reporters import summarize, write_html_report, write_html_report_from_json, write_json_report, write_markdown_report
+from review import calibrate_judges, sample_review_items, summarize_human_review, write_calibration_json, write_calibration_markdown, write_human_review_json, write_human_review_markdown, write_review_queue_json, write_review_queue_jsonl, write_review_queue_markdown
 from runners import EvalExecutor
 from rsi.action_risk import analyze_action_risk, write_action_json, write_action_markdown
 from rsi.decision_explainer import explain_rsi_decision, write_rsi_decision_json, write_rsi_decision_markdown
@@ -136,6 +139,124 @@ def env_clean(
         typer.echo(f"Environment cleanup planned={len(report['planned_delete'])}, deleted={len(report['deleted'])}. Reports: {', '.join(str(path) for path in paths)}")
     else:
         typer.echo(f"Environment cleanup planned={len(report['planned_delete'])}, deleted={len(report['deleted'])}, dry_run={report['dry_run']}")
+
+
+@app.command("review-sample")
+def review_sample(
+    run: Path = typer.Option(..., "--run", help="Run directory containing report.json and traces.jsonl."),
+    out: Path = typer.Option(Path("runs/review-queue.jsonl"), "--out", "-o", help="Output path for one format, or output stem when multiple formats are requested."),
+    formats: list[str] | None = typer.Option(None, "--format", help="Output format: jsonl, json, or markdown. Can be repeated."),
+    strategy: list[str] | None = typer.Option(None, "--strategy", help="Sampling strategy: failures, low-score, high-risk, safety, judge, environment, random. Can be repeated."),
+    limit: int | None = typer.Option(None, "--limit", help="Maximum review items to emit."),
+    low_score_threshold: float = typer.Option(0.7, "--low-score-threshold", help="Score threshold for low-score sampling."),
+) -> None:
+    """Generate a human review queue from a run."""
+    report = sample_review_items(run, strategies=strategy or ["failures", "low-score", "high-risk"], limit=limit, low_score_threshold=low_score_threshold)
+    paths = _write_review_queue_outputs(out, report, formats or ["jsonl"])
+    typer.echo(f"Review queue items={len(report.get('items', []))}. Reports: {', '.join(str(path) for path in paths)}")
+
+
+@app.command("review-import")
+def review_import(
+    queue: Path = typer.Option(..., "--queue", help="Review queue JSONL/JSON produced by review-sample."),
+    labels: Path = typer.Option(..., "--labels", help="Human labels JSONL/JSON."),
+    out: Path = typer.Option(Path("runs/human-review.json"), "--out", "-o", help="Output path for one format, or output stem when multiple formats are requested."),
+    formats: list[str] | None = typer.Option(None, "--format", help="Output format: markdown or json. Can be repeated."),
+) -> None:
+    """Import human labels and summarize automated-vs-human review outcomes."""
+    report = summarize_human_review(queue, labels)
+    paths = _write_report_outputs(out, report, formats or ["json"], write_human_review_markdown, write_human_review_json)
+    typer.echo(f"Human review labeled={report['summary']['labeled']}, missing={report['summary']['missing_labels']}. Reports: {', '.join(str(path) for path in paths)}")
+
+
+@app.command("judge-calibration")
+def judge_calibration(
+    run: Path = typer.Option(..., "--run", help="Run directory containing report.json."),
+    human_review: Path = typer.Option(..., "--human-review", help="Human review JSON produced by review-import."),
+    out: Path = typer.Option(Path("runs/judge-calibration.md"), "--out", "-o", help="Output path for one format, or output stem when multiple formats are requested."),
+    formats: list[str] | None = typer.Option(None, "--format", help="Output format: markdown or json. Can be repeated."),
+) -> None:
+    """Calibrate automated/LLM judge results against human labels."""
+    report = calibrate_judges(run, human_review)
+    paths = _write_report_outputs(out, report, formats or ["markdown"], write_calibration_markdown, write_calibration_json)
+    typer.echo(f"Judge calibration agreement={report['summary']['agreement_rate']:.2%}, labeled={report['summary']['labeled_cases']}. Reports: {', '.join(str(path) for path in paths)}")
+
+
+@app.command("production-ingest")
+def production_ingest(
+    events: Path = typer.Option(..., "--events", help="Production events JSONL/JSON."),
+    out: Path = typer.Option(Path("runs/production/production.json"), "--out", "-o"),
+    formats: list[str] | None = typer.Option(None, "--format", help="Output format: json, jsonl, or markdown. Can be repeated."),
+) -> None:
+    """Normalize production events and summarize production health signals."""
+    report = ingest_production_events(events)
+    paths = _write_production_outputs(out, report, formats or ["json"])
+    typer.echo(f"Production events={report['summary']['events']}, error_rate={report['summary']['error_rate']:.2%}. Reports: {', '.join(str(path) for path in paths)}")
+
+
+@app.command("feedback-ingest")
+def feedback_ingest(
+    events: Path = typer.Option(..., "--events", help="Production events JSONL/JSON."),
+    feedback: Path = typer.Option(..., "--feedback", help="User feedback JSONL/JSON."),
+    out: Path = typer.Option(Path("runs/production/feedback.json"), "--out", "-o"),
+    formats: list[str] | None = typer.Option(None, "--format", help="Output format: markdown or json. Can be repeated."),
+) -> None:
+    """Join user feedback to production events and summarize feedback signals."""
+    report = ingest_feedback(events, feedback)
+    paths = _write_report_outputs(out, report, formats or ["json"], write_feedback_markdown, write_feedback_json)
+    typer.echo(f"Feedback={report['summary']['feedback']}, negative={report['summary']['negative_feedback']}, unmatched={report['summary']['unmatched_feedback']}. Reports: {', '.join(str(path) for path in paths)}")
+
+
+@app.command("production-summary")
+def production_summary(
+    events: Path = typer.Option(..., "--events", help="Production events JSONL/JSON."),
+    feedback: Path | None = typer.Option(None, "--feedback", help="Optional user feedback JSONL/JSON."),
+    out: Path = typer.Option(Path("runs/production/summary.md"), "--out", "-o"),
+    formats: list[str] | None = typer.Option(None, "--format", help="Output format: markdown or json. Can be repeated."),
+) -> None:
+    """Summarize production events and optional feedback without rewriting inputs."""
+    event_items = load_production_events(events)
+    feedback_items = load_user_feedback(feedback) if feedback else []
+    report = {"events_source": str(events), "feedback_source": str(feedback) if feedback else None, "summary": summarize_production(event_items, feedback_items), "events": [item.model_dump(mode="json") for item in event_items], "feedback": [item.model_dump(mode="json") for item in feedback_items]}
+    paths = _write_report_outputs(out, report, formats or ["markdown"], write_production_markdown, write_production_json)
+    typer.echo(f"Production summary events={report['summary']['events']}, feedback={report['summary']['feedback']}. Reports: {', '.join(str(path) for path in paths)}")
+
+
+@app.command("feedback-to-regressions")
+def feedback_to_regressions(
+    events: Path = typer.Option(..., "--events", help="Production events JSONL/JSON."),
+    feedback: Path = typer.Option(..., "--feedback", help="User feedback JSONL/JSON."),
+    out: Path | None = typer.Option(None, "--out", "-o", help="Output YAML regression dataset path."),
+    append_to: Path | None = typer.Option(None, "--append-to", help="Append generated regressions to this dataset path."),
+    dedupe: bool = typer.Option(False, "--dedupe/--no-dedupe", help="Deduplicate when appending."),
+    only_negative: bool = typer.Option(True, "--only-negative/--all-feedback", help="Only convert negative/user-failure feedback."),
+    category: str | None = typer.Option(None, "--category", help="Only include feedback with this category."),
+    limit: int | None = typer.Option(None, "--limit", help="Maximum regression cases to generate."),
+) -> None:
+    """Convert production feedback into regression dataset cases."""
+    if out is None and append_to is None:
+        raise typer.BadParameter("either --out or --append-to is required")
+    dataset = production_feedback_to_regressions(events, feedback, only_negative=only_negative, limit=limit, category=category)
+    output_path = append_to or out
+    if append_to is not None:
+        dataset = append_production_regressions(append_to, dataset, dedupe=dedupe)
+    else:
+        write_production_regressions(output_path, dataset)
+    typer.echo(f"Generated {len(dataset.get('cases', []))} production regression cases: {output_path}")
+
+
+@app.command("production-coverage")
+def production_coverage(
+    production: Path = typer.Option(..., "--production", help="Production artifact JSON/JSONL or events JSONL."),
+    dataset: Path | None = typer.Option(None, "--dataset", help="Eval dataset YAML to compare."),
+    run: Path | None = typer.Option(None, "--run", help="Eval run directory with report.json to compare."),
+    out: Path = typer.Option(Path("runs/production/coverage.md"), "--out", "-o"),
+    formats: list[str] | None = typer.Option(None, "--format", help="Output format: markdown or json. Can be repeated."),
+) -> None:
+    """Compare production traffic segments against eval coverage."""
+    report = analyze_production_coverage(production, dataset_path=dataset, run_path=run)
+    paths = _write_report_outputs(out, report, formats or ["markdown"], write_coverage_markdown, write_coverage_json)
+    typer.echo(f"Production coverage uncovered={report['summary']['uncovered_segments']}, underrepresented={report['summary']['underrepresented_segments']}. Reports: {', '.join(str(path) for path in paths)}")
 
 
 async def _run_async(
@@ -877,6 +998,46 @@ def _write_report_outputs(out: Path, report: dict, formats: list[str], markdown_
             markdown_writer(path, report)
         else:
             json_writer(path, report)
+        output_paths.append(path)
+    return output_paths
+
+
+def _write_production_outputs(out: Path, report: dict, formats: list[str]) -> list[Path]:
+    output_paths: list[Path] = []
+    multiple = len(formats) > 1
+    for fmt in formats:
+        normalized = fmt.lower()
+        if normalized == "md":
+            normalized = "markdown"
+        if normalized not in {"json", "jsonl", "markdown"}:
+            raise typer.BadParameter(f"unsupported production output format: {fmt}")
+        path = _multi_format_output_path(out, normalized, multiple)
+        if normalized == "json":
+            write_production_json(path, report)
+        elif normalized == "jsonl":
+            write_production_jsonl(path, report)
+        else:
+            write_production_markdown(path, report)
+        output_paths.append(path)
+    return output_paths
+
+
+def _write_review_queue_outputs(out: Path, report: dict, formats: list[str]) -> list[Path]:
+    output_paths: list[Path] = []
+    multiple = len(formats) > 1
+    for fmt in formats:
+        normalized = fmt.lower()
+        if normalized == "md":
+            normalized = "markdown"
+        if normalized not in {"jsonl", "json", "markdown"}:
+            raise typer.BadParameter(f"unsupported review output format: {fmt}")
+        path = _multi_format_output_path(out, normalized, multiple)
+        if normalized == "jsonl":
+            write_review_queue_jsonl(path, report)
+        elif normalized == "json":
+            write_review_queue_json(path, report)
+        else:
+            write_review_queue_markdown(path, report)
         output_paths.append(path)
     return output_paths
 

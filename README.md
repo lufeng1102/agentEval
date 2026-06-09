@@ -87,6 +87,15 @@ AgentEval is a Python evaluation platform for self-evolving / RSI (recursive sel
   - command/test outcome recording for setup/test/teardown phases
   - `environment.jsonl` artifacts and environment summaries in reports
   - `environment` evaluator, coding-agent `tests` evaluator, and `env-validate` CLI
+- Human review and judge calibration workflow:
+  - `review-sample` generates JSONL/Markdown queues from run artifacts
+  - `review-import` imports expert labels and summarizes automated-vs-human mismatches
+  - `judge-calibration` reports agreement, false passes/fails, precision/recall/F1, score error, and recommendations
+- Production monitoring and feedback loop:
+  - `production-ingest` normalizes production events and reports health signals
+  - `feedback-ingest` joins user feedback to production events
+  - `feedback-to-regressions` converts negative production feedback into regression datasets
+  - `production-coverage` compares production segments against eval coverage
 - Multi-config batch execution with `matrix`.
 - Prompt hash/version and agent version deltas in run manifests/comparisons.
 - pass@k/pass_all stability metrics for repeated runs.
@@ -118,7 +127,9 @@ Core modules:
 | Runner | `src/runners/executor.py` | Executes cases with concurrency, timeout, retries, and repeats; writes `traces.jsonl` and `results.jsonl`. |
 | Evaluators | `src/evaluators/` | Score agent runs against expected facts, safety policy, JSON schema, regex, trajectory, state, cost, and other assertions. |
 | Reporters | `src/reporters/` | Summarize runs/results into JSON, Markdown, and HTML reports. |
-| Environment | `src/environments/` | Prepares isolated filesystem workspaces, snapshots before/after state, computes file diffs, and records environment artifacts for agentic outcome evaluation. |
+| Environment | `src/environments/` | Prepares isolated filesystem, SQLite, and HTTP API outcome-verification environments and records artifacts for agentic task evaluation. |
+| Review | `src/review/` | Builds human review queues, imports expert labels, and calibrates automated/LLM judge results against human judgement. |
+| Production | `src/production/` | Normalizes production events and feedback, summarizes production health, converts negative feedback to regressions, and analyzes eval coverage gaps. |
 | Comparison | `src/compare.py`, `src/matrix.py` | Compare runs and execute one dataset against multiple configs. |
 
 The key design decision is separation of concerns:
@@ -1515,6 +1526,119 @@ PYTHONPATH=src python -m cli env-clean \
 Use `--keep-failures` to retain workspaces for failed cases during cleanup.
 
 The `environment` evaluator supports file assertions (`required_files`, `forbidden_files`, `required_modified_files`, `forbidden_modified_files`, `max_modified_files`, `no_deleted_files`), command assertions (`required_setup_success`, `required_test_success`, `required_teardown_success`, `required_command_success`, `required_command_stdout`, `forbidden_command_stdout`, `forbidden_command_failure`, `max_command_failures`), SQLite query assertions (`database.required_rows`, `database.forbidden_rows`, `database.required_query_success`, `database.max_query_failures`), and HTTP assertions (`http.required_status`, `http.required_json_paths`, `http.max_http_failures`). Command output and HTTP bodies are captured in `environment.jsonl` and truncated by `max_command_output_chars`. The `tests` evaluator reads phase=`test` commands from environment artifacts and provides coding-agent fail-to-pass/pass-to-pass gates via `expected.tests.fail_to_pass`, `expected.tests.pass_to_pass`, `require_all_test_commands_pass`, and `max_test_failures`. The harness intentionally avoids Docker, browser automation, and complex service orchestration for now; those are planned as future Environment Harness extensions.
+
+## Human review and judge calibration
+
+AgentEval can turn a run into a human review queue, import expert labels, and calibrate automated/LLM judge results against those labels. This is useful when `rubric_judge`, `trajectory_judge`, or judge metrics are used as release signals and need periodic human validation.
+
+Generate a review queue from a run:
+
+```bash
+PYTHONPATH=src python -m cli review-sample \
+  --run runs/pr \
+  --out runs/pr/review-queue.jsonl \
+  --format jsonl \
+  --format markdown \
+  --strategy failures \
+  --strategy low-score \
+  --strategy high-risk \
+  --limit 50
+```
+
+Supported sampling strategies are `failures`, `low-score`, `high-risk`, `safety`, `judge`, `environment`, and `random`. The queue contains stable `review_id` values, case inputs, expected fields, rubrics, agent output, trace snippets, environment artifacts, evaluator results, priority, and suggested review reasons.
+
+Human labels are JSONL records. `review_id` is preferred; `(case_id, repeat_index)` is used as a fallback:
+
+```json
+{"review_id":"rev_abc123","case_id":"refund_001","repeat_index":0,"human_passed":false,"human_score":0.25,"human_failure_type":"tool_argument_error","human_reason":"Agent called the refund tool with the wrong order id.","reviewer":"domain-expert-a","reviewed_at":"2026-06-09T00:00:00Z"}
+```
+
+Import labels and summarize human review outcomes:
+
+```bash
+PYTHONPATH=src python -m cli review-import \
+  --queue runs/pr/review-queue.jsonl \
+  --labels reviews/labels.jsonl \
+  --out runs/pr/human-review.json \
+  --format json \
+  --format markdown
+```
+
+The human review summary reports labeled/missing counts, human pass rate, average score, failure types, reviewer counts, and automated-vs-human mismatches (`false_pass` and `false_fail`).
+
+Calibrate automated and LLM judge results against human labels:
+
+```bash
+PYTHONPATH=src python -m cli judge-calibration \
+  --run runs/pr \
+  --human-review runs/pr/human-review.json \
+  --out runs/pr/judge-calibration.md \
+  --format markdown \
+  --format json
+```
+
+The calibration report includes agreement rate, false passes, false fails, precision/recall/F1, mean absolute score error, by-evaluator breakdowns, top disagreements, and recommendations such as tightening thresholds, splitting broad rubrics, or adding deterministic outcome evaluators.
+
+## Production monitoring and feedback loops
+
+Offline evals should be paired with production monitoring and real user feedback. AgentEval provides a local, file-based production loop for importing normalized production events, joining user feedback, converting negative feedback into regression datasets, and comparing production traffic segments against eval coverage.
+
+Production events are JSONL or JSON records. Avoid raw PII; use hashed identifiers such as `user_id_hash` and perform upstream redaction before ingestion.
+
+```json
+{"event_id":"evt_refund_1","timestamp":"2026-06-09T10:00:00Z","session_id":"sess_1","user_id_hash":"user_hash_1","agent_id":"support-agent","agent_version":"v2","model":"claude-opus-4-8","input":"I need a refund for order A123.","final_output":"I started the refund process.","tool_calls":[{"name":"refund_order","input":{"order_id":"A123"},"output":{"status":"created"}}],"outcome":{"refund_created":true,"order_id":"A123"},"latency_ms":1800,"errors":[],"tags":["support","refund"],"metadata":{"capability":"refunds","risk_level":"high","channel":"chat","intent":"refund","locale":"en-US"}}
+```
+
+Feedback records can link by `event_id` or `session_id`:
+
+```json
+{"feedback_id":"fb_cancel_1","event_id":"evt_cancel_1","rating":-1,"sentiment":"negative","category":"tool_error","comment":"The agent did not actually cancel my subscription.","user_reported_failure":true,"reviewer_label":{"rubric":"The agent must cancel the subscription or clearly explain why it cannot."}}
+```
+
+Normalize and summarize production events:
+
+```bash
+PYTHONPATH=src python -m cli production-ingest \
+  --events examples/production/events.jsonl \
+  --out runs/production/production.json \
+  --format json \
+  --format markdown
+```
+
+Join feedback to events:
+
+```bash
+PYTHONPATH=src python -m cli feedback-ingest \
+  --events examples/production/events.jsonl \
+  --feedback examples/production/feedback.jsonl \
+  --out runs/production/feedback.json \
+  --format json \
+  --format markdown
+```
+
+Convert negative/user-reported production feedback into regression cases:
+
+```bash
+PYTHONPATH=src python -m cli feedback-to-regressions \
+  --events examples/production/events.jsonl \
+  --feedback examples/production/feedback.jsonl \
+  --out runs/production/regressions.yaml
+```
+
+The generated regression cases are tagged with `production`, `feedback`, and `regression`, preserve production metadata, and default to `review_status: needs_review` when feedback does not provide a precise expected answer.
+
+Check whether production traffic segments are covered by an eval dataset or run report:
+
+```bash
+PYTHONPATH=src python -m cli production-coverage \
+  --production runs/production/production.json \
+  --dataset examples/datasets/basic_agent_eval.yaml \
+  --out runs/production/coverage.md \
+  --format markdown \
+  --format json
+```
+
+Coverage compares tags, capability, risk level, channel, intent, and locale where available, and highlights uncovered or underrepresented production segments.
 
 ## Matrix runs
 

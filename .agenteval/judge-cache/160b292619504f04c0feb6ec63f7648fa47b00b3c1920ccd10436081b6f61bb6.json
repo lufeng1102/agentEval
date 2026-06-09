@@ -1,0 +1,46 @@
+{
+  "overall_assessment": {
+    "summary": "Judge confirms regression.",
+    "release_risk": "high",
+    "needs_human_review": true
+  },
+  "diagnoses": [
+    {
+      "matches_rule_diagnosis_id": "diag_tool_output_missing_required_fact_missing_fact",
+      "verdict": "supported",
+      "title": "Confirmed tool issue",
+      "root_cause": "tool_output_missing_required_fact",
+      "confidence": 0.9,
+      "severity": "high",
+      "affected_cases": [
+        "c1"
+      ],
+      "affected_evaluators": [
+        "contains"
+      ],
+      "likely_components": [
+        "toolset"
+      ],
+      "reasoning_summary": "The same tool appears in the failed trace.",
+      "evidence": [
+        {
+          "type": "trace_pattern",
+          "description": "lookup used before failure"
+        }
+      ],
+      "alternative_root_causes": [],
+      "recommended_actions": [
+        "Inspect lookup output"
+      ],
+      "human_review_questions": [
+        "Was deadline present?"
+      ]
+    }
+  ],
+  "judge": {
+    "cached": false,
+    "cache_key": "160b292619504f04c0feb6ec63f7648fa47b00b3c1920ccd10436081b6f61bb6",
+    "model": "claude-opus-4-8",
+    "provider": "anthropic"
+  }
+}
