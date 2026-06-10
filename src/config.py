@@ -61,6 +61,10 @@ class EnvironmentConfig(BaseModel):
     test_checks: list[dict[str, Any]] = Field(default_factory=list)
     teardown_checks: list[dict[str, Any]] = Field(default_factory=list)
     database_path: str | None = None
+    browser_timeout_seconds: float = 30
+    browser_headless: bool = True
+    browser_viewport: dict[str, Any] = Field(default_factory=lambda: {"width": 1280, "height": 720})
+    browser_screenshot: bool = False
     command_timeout_seconds: float = 120
     max_command_output_chars: int = 20000
     retain_workspaces: str = "always"

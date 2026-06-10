@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from config import EnvironmentConfig
+from environments.browser import PreparedBrowserEnvironment, prepare_browser_environment
 from environments.database import PreparedDatabaseEnvironment, prepare_database_environment
 from environments.filesystem import PreparedEnvironment, prepare_filesystem_environment
 from environments.http_api import PreparedHttpApiEnvironment, prepare_http_api_environment
 from schemas import EvalCase
 
-PreparedAnyEnvironment = PreparedEnvironment | PreparedDatabaseEnvironment | PreparedHttpApiEnvironment
+PreparedAnyEnvironment = PreparedEnvironment | PreparedDatabaseEnvironment | PreparedHttpApiEnvironment | PreparedBrowserEnvironment
 
 
 def environment_enabled(config: EnvironmentConfig, case: EvalCase | None = None) -> bool:
@@ -21,6 +22,8 @@ def prepare_environment(case: EvalCase, repeat_index: int, output_dir, config: E
         return prepare_database_environment(case, repeat_index, output_dir, config)
     if env_type == "http_api":
         return prepare_http_api_environment(case, repeat_index, output_dir, config)
+    if env_type == "browser":
+        return prepare_browser_environment(case, repeat_index, output_dir, config)
     raise ValueError(f"unsupported environment type: {env_type}")
 
 

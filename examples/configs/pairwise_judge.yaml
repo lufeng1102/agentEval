@@ -1,0 +1,22 @@
+pairwise_judge:
+  provider: anthropic
+  model: claude-opus-4-8
+  enabled: true
+  mode: auto
+  strict: false
+  timeout_seconds: 60
+  threshold: 0.6
+  score_tolerance: 0.05
+  latency_tolerance_ms: 100
+  input_limits:
+    max_cases: 50
+    max_output_chars: 4000
+    max_tool_calls: 20
+    max_tool_json_chars: 4000
+    max_context_json_chars: 40000
+  cost:
+    max_requests: 50
+    max_output_tokens: 2000
+  cache:
+    enabled: true
+    cache_dir: .agenteval/judge-cache

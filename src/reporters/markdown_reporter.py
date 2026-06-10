@@ -22,7 +22,7 @@ def write_markdown_report(path: str | Path, cases: list[EvalCase], runs: list[Ag
         f"- Tokens: input={summary['usage']['input_tokens']}, output={summary['usage']['output_tokens']}, total_input={summary['usage']['total_input_tokens']}, cache_read={summary['usage']['cache_read_input_tokens']}, cache_hit_rate={summary['usage']['cache_hit_rate']:.2%}",
         f"- Tool calls: total={summary['tool_calls']['total']}, failed={summary['tool_calls']['failed']}",
         f"- Run errors: {summary['errors']['total']}",
-        f"- Environment sessions: {summary.get('environment', {}).get('sessions', 0)}, files changed: created={summary.get('environment', {}).get('created_files', 0)}, modified={summary.get('environment', {}).get('modified_files', 0)}, deleted={summary.get('environment', {}).get('deleted_files', 0)}, protected violations={summary.get('environment', {}).get('protected_path_violations', 0)}, command failures={summary.get('environment', {}).get('command_failures', 0)}/{summary.get('environment', {}).get('commands', 0)}, query failures={summary.get('environment', {}).get('query_failures', 0)}/{summary.get('environment', {}).get('queries', 0)}, HTTP failures={summary.get('environment', {}).get('http_failures', 0)}/{summary.get('environment', {}).get('http_checks', 0)}",
+        f"- Environment sessions: {summary.get('environment', {}).get('sessions', 0)}, files changed: created={summary.get('environment', {}).get('created_files', 0)}, modified={summary.get('environment', {}).get('modified_files', 0)}, deleted={summary.get('environment', {}).get('deleted_files', 0)}, protected violations={summary.get('environment', {}).get('protected_path_violations', 0)}, command failures={summary.get('environment', {}).get('command_failures', 0)}/{summary.get('environment', {}).get('commands', 0)}, query failures={summary.get('environment', {}).get('query_failures', 0)}/{summary.get('environment', {}).get('queries', 0)}, HTTP failures={summary.get('environment', {}).get('http_failures', 0)}/{summary.get('environment', {}).get('http_checks', 0)}, browser failures={summary.get('environment', {}).get('browser_failures', 0)}/{summary.get('environment', {}).get('browser_checks', 0)}, browser screenshots={summary.get('environment', {}).get('browser_screenshots', 0)}",
         "",
         "## By Evaluator",
         "",
@@ -90,6 +90,7 @@ def write_markdown_report(path: str | Path, cases: list[EvalCase], runs: list[Ag
                 failed_commands = [command for command in commands if command.get("timed_out") or command.get("exit_code") is None or command.get("exit_code") != 0]
                 failed_queries = [query for query in env.get("database", []) if query.get("error")]
                 failed_http = [check for check in env.get("http", []) if check.get("error") or check.get("status_code") is None]
+                failed_browser = [check for check in env.get("browser", []) if check.get("error") or check.get("status") == "error"]
                 lines.extend([
                     "Environment diff:",
                     f"- Created: {', '.join((diff.get('created') or [])[:10]) or 'None'}",
@@ -99,6 +100,7 @@ def write_markdown_report(path: str | Path, cases: list[EvalCase], runs: list[Ag
                     f"- Failed commands: {', '.join(command.get('command', '') for command in failed_commands[:5]) or 'None'}",
                     f"- Failed queries: {', '.join(query.get('query', '') for query in failed_queries[:5]) or 'None'}",
                     f"- Failed HTTP checks: {', '.join(check.get('url', '') for check in failed_http[:5]) or 'None'}",
+                    f"- Failed browser checks: {', '.join(check.get('url', '') or check.get('selector', '') for check in failed_browser[:5]) or 'None'}",
                     "",
                 ])
 

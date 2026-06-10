@@ -1,0 +1,30 @@
+metadata:
+  name: browser-env-eval
+  description: Minimal browser/GUI outcome verification example.
+  suite_type: smoke
+cases:
+  - id: browser_status_saved
+    input: Open the browser task page and confirm the saved status is visible.
+    tags: [browser, gui, environment]
+    metadata:
+      capability: browser_use
+      risk_level: medium
+    expected:
+      browser:
+        max_browser_failures: 0
+        required_url:
+          - contains: index.html
+        required_title:
+          - contains: AgentEval Browser Task
+        required_text:
+          - selector: "#status"
+            contains: "Saved"
+        forbidden_text:
+          - contains: "Unhandled Error"
+        required_selectors:
+          - "#status"
+        required_attributes:
+          - selector: "[data-testid=confirmation]"
+            attribute: "data-state"
+            value: "complete"
+        required_screenshots: 1

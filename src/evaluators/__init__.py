@@ -4,6 +4,7 @@ import importlib
 
 from config import EvaluatorConfig
 from evaluators.base import Evaluator
+from evaluators.browser import BrowserEvaluator
 from evaluators.cost import CostEvaluator
 from evaluators.environment import EnvironmentEvaluator
 from evaluators.exact_match import ContainsEvaluator, ExactMatchEvaluator
@@ -20,6 +21,8 @@ from evaluators.judge_metrics import JUDGE_METRIC_TYPES, JudgeMetricEvaluator
 
 
 def build_evaluator(config: EvaluatorConfig) -> Evaluator:
+    if config.type == "browser":
+        return BrowserEvaluator()
     if config.type == "environment":
         return EnvironmentEvaluator()
     if config.type == "tests":
@@ -73,6 +76,7 @@ def _build_imported_evaluator(config: EvaluatorConfig) -> Evaluator:
 
 
 __all__ = [
+    "BrowserEvaluator",
     "Evaluator",
     "ContainsEvaluator",
     "CostEvaluator",

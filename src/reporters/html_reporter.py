@@ -202,6 +202,7 @@ def _environment_panel(env: dict[str, Any]) -> str:
     failed_commands = [command for command in commands if command.get("timed_out") or command.get("exit_code") is None or command.get("exit_code") != 0]
     failed_queries = [query for query in env.get("database", []) if query.get("error")]
     failed_http = [check for check in env.get("http", []) if check.get("error") or check.get("status_code") is None]
+    failed_browser = [check for check in env.get("browser", []) if check.get("error") or check.get("status") == "error"]
     changed = []
     for label, key in [("Created", "created"), ("Modified", "modified"), ("Deleted", "deleted"), ("Protected", "protected_path_violations")]:
         values = diff.get(key) or []
@@ -214,7 +215,7 @@ def _environment_panel(env: dict[str, Any]) -> str:
     rows.append("</table></div>")
     return "\n".join([
         "<h3>Environment</h3>",
-        f"<div class='meta-row'><span>Created <strong>{len(diff.get('created') or [])}</strong></span><span>Modified <strong>{len(diff.get('modified') or [])}</strong></span><span>Deleted <strong>{len(diff.get('deleted') or [])}</strong></span><span>Protected <strong>{len(diff.get('protected_path_violations') or [])}</strong></span><span>Command failures <strong>{len(failed_commands)}</strong></span><span>Query failures <strong>{len(failed_queries)}</strong></span><span>HTTP failures <strong>{len(failed_http)}</strong></span></div>",
+        f"<div class='meta-row'><span>Created <strong>{len(diff.get('created') or [])}</strong></span><span>Modified <strong>{len(diff.get('modified') or [])}</strong></span><span>Deleted <strong>{len(diff.get('deleted') or [])}</strong></span><span>Protected <strong>{len(diff.get('protected_path_violations') or [])}</strong></span><span>Command failures <strong>{len(failed_commands)}</strong></span><span>Query failures <strong>{len(failed_queries)}</strong></span><span>HTTP failures <strong>{len(failed_http)}</strong></span><span>Browser failures <strong>{len(failed_browser)}</strong></span></div>",
         "<ul class='issue-list'>",
         *changed,
         "</ul>",

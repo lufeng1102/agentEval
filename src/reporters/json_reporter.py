@@ -90,7 +90,7 @@ def write_json_report(path: str | Path, cases: list[EvalCase], runs: list[AgentR
 
 def _environment_summary(runs: list[AgentRun]) -> dict[str, int]:
     sessions = [run.artifacts.get("environment") for run in runs if run.artifacts.get("environment")]
-    created = modified = deleted = protected = commands = command_failures = queries = query_failures = http_checks = http_failures = 0
+    created = modified = deleted = protected = commands = command_failures = queries = query_failures = http_checks = http_failures = browser_checks = browser_failures = browser_screenshots = 0
     for env in sessions:
         diff = env.get("diff", {}) if isinstance(env, dict) else {}
         created += len(diff.get("created") or [])
@@ -106,6 +106,10 @@ def _environment_summary(runs: list[AgentRun]) -> dict[str, int]:
         env_http = env.get("http") or []
         http_checks += len(env_http)
         http_failures += sum(1 for check in env_http if check.get("error") or check.get("status_code") is None)
+        env_browser = env.get("browser") or []
+        browser_checks += len(env_browser)
+        browser_failures += sum(1 for check in env_browser if check.get("error") or check.get("status") == "error")
+        browser_screenshots += sum(1 for check in env_browser if check.get("screenshot_path"))
     return {
         "sessions": len(sessions),
         "created_files": created,
@@ -118,6 +122,9 @@ def _environment_summary(runs: list[AgentRun]) -> dict[str, int]:
         "query_failures": query_failures,
         "http_checks": http_checks,
         "http_failures": http_failures,
+        "browser_checks": browser_checks,
+        "browser_failures": browser_failures,
+        "browser_screenshots": browser_screenshots,
     }
 
 
