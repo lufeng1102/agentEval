@@ -28,6 +28,34 @@ def test_env_validate_accepts_filesystem_config(tmp_path: Path) -> None:
     assert "Environment validation passed" in result.output
 
 
+def test_env_validate_accepts_browser_config(tmp_path: Path) -> None:
+    fixture = tmp_path / "browser_fixture"
+    fixture.mkdir()
+    (fixture / "index.html").write_text("<h1 id='status'>Saved</h1>", encoding="utf-8")
+    dataset = tmp_path / "dataset.yaml"
+    dataset.write_text("cases:\n  - id: c1\n    input: open\n    expected:\n      browser:\n        required_text:\n          - selector: '#status'\n            contains: Saved\n", encoding="utf-8")
+    config = tmp_path / "config.yaml"
+    config.write_text(f"environment:\n  type: browser\n  fixture: {fixture}\n  test_checks:\n    - path: index.html\n      selector: '#status'\nevaluators:\n  - type: browser\n", encoding="utf-8")
+
+    result = runner.invoke(app, ["env-validate", "--dataset", str(dataset), "--config", str(config)])
+
+    assert result.exit_code == 0, result.output
+
+
+def test_env_validate_rejects_invalid_browser_expected(tmp_path: Path) -> None:
+    fixture = tmp_path / "browser_fixture"
+    fixture.mkdir()
+    dataset = tmp_path / "dataset.yaml"
+    dataset.write_text("cases:\n  - id: c1\n    input: open\n    expected:\n      browser:\n        max_browser_failures: none\n", encoding="utf-8")
+    config = tmp_path / "config.yaml"
+    config.write_text(f"environment:\n  type: browser\n  fixture: {fixture}\nevaluators:\n  - type: browser\n", encoding="utf-8")
+
+    result = runner.invoke(app, ["env-validate", "--dataset", str(dataset), "--config", str(config)])
+
+    assert result.exit_code == 1
+    assert "expected.browser.max_browser_failures" in result.output
+
+
 def test_env_validate_rejects_missing_fixture(tmp_path: Path) -> None:
     dataset = tmp_path / "dataset.yaml"
     dataset.write_text("cases:\n  - id: c1\n    input: fix\n    expected:\n      environment: {}\n", encoding="utf-8")

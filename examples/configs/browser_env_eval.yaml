@@ -1,0 +1,18 @@
+agent:
+  provider: static
+  static_response: "Opened the browser task page and verified the saved status."
+environment:
+  type: browser
+  fixture: examples/envs/browser_task
+  test_checks:
+    - path: index.html
+      wait_for_selector: "#status"
+      selector: "#status"
+      screenshot: true
+    - path: index.html
+      selector: "[data-testid=confirmation]"
+      attribute: "data-state"
+evaluators:
+  - type: browser
+report:
+  formats: [json, markdown, html]

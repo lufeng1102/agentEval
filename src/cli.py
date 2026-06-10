@@ -21,6 +21,7 @@ from evolution.flaky import analyze_flaky, write_flaky_json, write_flaky_markdow
 from evolution.impact import analyze_impact, write_impact_json, write_impact_markdown
 from evolution.judge import apply_judge_overrides, build_judge_context, load_judge_config, merge_judge_diagnosis, run_judge_diagnosis, should_run_judge
 from evolution.leaderboard import build_leaderboard, write_leaderboard_json, write_leaderboard_markdown
+from evolution.pairwise import compare_pairwise, load_pairwise_config, write_pairwise_html, write_pairwise_json, write_pairwise_markdown
 from evolution.pr_summary import build_pr_summary, write_pr_summary_markdown
 from evolution.regression_status import mark_regression, summarize_regressions, update_regression_status, write_regression_status_json, write_regression_status_markdown
 from evolution.regressions import append_regression_dataset, generate_regression_dataset, write_regression_dataset
@@ -830,6 +831,50 @@ def html(
 
 
 @app.command()
+def pairwise(
+    baseline: Path = typer.Option(..., "--baseline", help="Baseline run directory containing report.json and traces.jsonl."),
+    candidate: Path = typer.Option(..., "--candidate", help="Candidate run directory containing report.json and traces.jsonl."),
+    out: Path = typer.Option(Path("runs/pairwise.md"), "--out", help="Output path for one format, or output stem when multiple formats are requested."),
+    formats: list[str] | None = typer.Option(None, "--format", help="Output format: markdown, json, or html. Can be repeated."),
+    judge: str = typer.Option("never", "--judge", help="Pairwise judge mode: never, auto, or always."),
+    judge_config: Path | None = typer.Option(None, "--judge-config", help="Optional pairwise judge YAML config."),
+    cache: bool | None = typer.Option(None, "--cache/--no-cache", help="Override pairwise judge cache usage."),
+    judge_strict: bool | None = typer.Option(None, "--judge-strict/--no-judge-strict", help="Fail instead of falling back when judge cannot run."),
+    fail_under_candidate_win_rate: float | None = typer.Option(None, "--fail-under-candidate-win-rate", help="Fail when candidate win rate is below this value."),
+    fail_on_baseline_win_rate_over: float | None = typer.Option(None, "--fail-on-baseline-win-rate-over", help="Fail when baseline win rate is above this value."),
+    fail_on_needs_review: bool = typer.Option(False, "--fail-on-needs-review/--no-fail-on-needs-review", help="Fail when any pairwise item needs human review."),
+) -> None:
+    """Compare baseline/candidate outputs side-by-side with deterministic or judged preference."""
+    config = load_pairwise_config(judge_config)
+    data = config.model_dump()
+    data["mode"] = judge
+    if cache is not None:
+        data["cache"]["enabled"] = cache
+    if judge_strict is not None:
+        data["strict"] = judge_strict
+    config = type(config).model_validate(data)
+    report = compare_pairwise(baseline, candidate, config=config, judge_mode=judge)
+    output_paths = _write_pairwise_outputs(out, report, formats or ["markdown"])
+    summary = report["summary"]
+    typer.echo(
+        f"Pairwise compared cases={summary['cases']}, candidate_wins={summary['candidate_wins']} ({summary['candidate_win_rate']:.2%}), "
+        f"baseline_wins={summary['baseline_wins']} ({summary['baseline_win_rate']:.2%}), ties={summary['ties']}. "
+        f"Reports: {', '.join(str(path) for path in output_paths)}"
+    )
+    failures: list[str] = []
+    if fail_under_candidate_win_rate is not None and summary["candidate_win_rate"] < fail_under_candidate_win_rate:
+        failures.append(f"candidate win rate {summary['candidate_win_rate']:.2%} below required {fail_under_candidate_win_rate:.2%}")
+    if fail_on_baseline_win_rate_over is not None and summary["baseline_win_rate"] > fail_on_baseline_win_rate_over:
+        failures.append(f"baseline win rate {summary['baseline_win_rate']:.2%} exceeds max {fail_on_baseline_win_rate_over:.2%}")
+    if fail_on_needs_review and summary.get("needs_review", 0):
+        failures.append(f"pairwise items need review: {summary['needs_review']}")
+    if failures:
+        for failure in failures:
+            typer.echo(f"Pairwise threshold failed: {failure}", err=True)
+        raise typer.Exit(code=1)
+
+
+@app.command()
 def compare(
     baseline: Path = typer.Option(..., "--baseline", help="Baseline run directory containing report.json."),
     candidate: Path = typer.Option(..., "--candidate", help="Candidate run directory containing report.json."),
@@ -932,6 +977,26 @@ def _write_compare_outputs(out: Path, comparison: dict, formats: list[str]) -> l
             write_compare_json(path, comparison)
         else:
             write_compare_html(path, comparison)
+        output_paths.append(path)
+    return output_paths
+
+
+def _write_pairwise_outputs(out: Path, report: dict, formats: list[str]) -> list[Path]:
+    output_paths: list[Path] = []
+    multiple = len(formats) > 1
+    for fmt in formats:
+        normalized = fmt.lower()
+        if normalized == "md":
+            normalized = "markdown"
+        if normalized not in {"markdown", "json", "html"}:
+            raise typer.BadParameter(f"unsupported pairwise format: {fmt}")
+        path = _multi_format_output_path(out, normalized, multiple)
+        if normalized == "markdown":
+            write_pairwise_markdown(path, report)
+        elif normalized == "json":
+            write_pairwise_json(path, report)
+        else:
+            write_pairwise_html(path, report)
         output_paths.append(path)
     return output_paths
 
@@ -1177,7 +1242,7 @@ def _validate_dataset_config(cases, config: AppConfig) -> list[str]:
 def _validate_environment_config(cases, config: AppConfig) -> list[str]:
     errors: list[str] = []
     env = config.environment
-    if env.type not in {"none", "filesystem", "database", "http_api"}:
+    if env.type not in {"none", "filesystem", "database", "http_api", "browser"}:
         errors.append(f"unsupported environment type: {env.type}")
     if env.type != "none":
         if env.command_timeout_seconds <= 0:
@@ -1198,10 +1263,17 @@ def _validate_environment_config(cases, config: AppConfig) -> list[str]:
             errors.append(f"environment fixture does not exist or is not a directory: {env.fixture}")
     if env.type == "database" and env.fixture is not None and (not env.fixture.exists() or not env.fixture.is_file()):
         errors.append(f"database environment fixture does not exist or is not a file: {env.fixture}")
+    if env.type == "browser":
+        if env.fixture is not None and (not env.fixture.exists() or not env.fixture.is_dir()):
+            errors.append(f"browser environment fixture does not exist or is not a directory: {env.fixture}")
+        if env.browser_timeout_seconds <= 0:
+            errors.append("environment.browser_timeout_seconds must be greater than 0")
+        if not isinstance(env.browser_viewport, dict):
+            errors.append("environment.browser_viewport must be an object")
     for case in cases:
         case_env = case.environment or {}
         case_type = case_env.get("type", env.type)
-        if case_type not in {"none", "filesystem", "database", "http_api"}:
+        if case_type not in {"none", "filesystem", "database", "http_api", "browser"}:
             errors.append(f"case {case.id} has unsupported environment type: {case_type}")
         fixture = case_env.get("fixture")
         if fixture is not None:
@@ -1210,6 +1282,8 @@ def _validate_environment_config(cases, config: AppConfig) -> list[str]:
                 errors.append(f"case {case.id} environment fixture does not exist or is not a directory: {fixture}")
             if case_type == "database" and (not fixture_path.exists() or not fixture_path.is_file()):
                 errors.append(f"case {case.id} database environment fixture does not exist or is not a file: {fixture}")
+            if case_type == "browser" and (not fixture_path.exists() or not fixture_path.is_dir()):
+                errors.append(f"case {case.id} browser environment fixture does not exist or is not a directory: {fixture}")
         for key in ["setup_commands", "test_commands", "teardown_commands"]:
             if key in case_env and not _is_string_list(case_env[key]):
                 errors.append(f"case {case.id} environment.{key} must be a list of strings")
@@ -1228,14 +1302,23 @@ def _validate_environment_config(cases, config: AppConfig) -> list[str]:
                 errors.append(f"case {case.id} expected.environment.{key} must be a list")
         if "max_command_failures" in expected_env and not isinstance(expected_env["max_command_failures"], int):
             errors.append(f"case {case.id} expected.environment.max_command_failures must be an integer")
-        for section, list_keys in {"database": ["required_query_success", "required_rows", "forbidden_rows"], "http": ["required_status", "required_json_paths"]}.items():
+        for section, list_keys in {"database": ["required_query_success", "required_rows", "forbidden_rows"], "http": ["required_status", "required_json_paths"], "browser": ["required_url", "required_title", "required_text", "forbidden_text", "required_selectors", "required_attributes"]}.items():
+            section_payloads = []
             if section in expected_env:
-                if not isinstance(expected_env[section], dict):
-                    errors.append(f"case {case.id} expected.environment.{section} must be an object")
+                section_payloads.append((f"expected.environment.{section}", expected_env[section]))
+            if section == "browser" and "browser" in case.expected:
+                section_payloads.append(("expected.browser", case.expected["browser"]))
+            for label, payload in section_payloads:
+                if not isinstance(payload, dict):
+                    errors.append(f"case {case.id} {label} must be an object")
                     continue
                 for key in list_keys:
-                    if key in expected_env[section] and not isinstance(expected_env[section][key], list):
-                        errors.append(f"case {case.id} expected.environment.{section}.{key} must be a list")
+                    if key in payload and not isinstance(payload[key], list):
+                        errors.append(f"case {case.id} {label}.{key} must be a list")
+                if section == "browser":
+                    for key in ["max_browser_failures", "required_screenshots"]:
+                        if key in payload and not isinstance(payload[key], int):
+                            errors.append(f"case {case.id} {label}.{key} must be an integer")
         expected_tests = case.expected.get("tests", {}) if isinstance(case.expected, dict) else {}
         if "tests" in selected:
             if not isinstance(expected_tests, dict):

@@ -2,6 +2,35 @@
 
 AgentEval is a Python evaluation platform for self-evolving / RSI (recursive self-improvement) Claude/LLM agents. It separates datasets, agent adapters, execution traces, evaluators, reports, CI thresholds, evolution diagnostics, and RSI safety governance so self-improving agent versions can be evaluated locally or in CI before promotion.
 
+## Core features / 核心功能总览
+
+| Area | Capability |
+| --- | --- |
+| Evaluation harness | Run YAML datasets against configurable agent adapters, evaluators, repeats, retries, timeouts, and CI thresholds. |
+| Dataset and config protocols | Validate stable YAML contracts for cases, expected outputs, scenarios, agent providers, runner settings, evaluators, and report formats. |
+| Agent adapters | Evaluate deterministic `static` agents, Anthropic-backed agents, Claude Code custom agents, and imported/plugin agents behind one trace contract. |
+| Trace and artifact recording | Persist `manifest.json`, `traces.jsonl`, `results.jsonl`, reports, environment artifacts, and run metadata for auditability. |
+| Rule-based evaluators | Score exact matches, required facts, regex/schema constraints, safety policy, trajectory/tool usage, tool outputs, state, minefields, cost, environments, and tests. |
+| LLM judge evaluators | Use Claude-powered rubric/trajectory judges and foundational judge metrics such as answer relevancy, faithfulness, context quality, hallucination, task completion, and conversation quality. |
+| Environment outcome verification | Verify real task outcomes in isolated filesystem, SQLite database, HTTP API, and browser/GUI environments with setup/test/teardown command capture. |
+| Coding-agent test gates | Evaluate fail-to-pass and pass-to-pass behavior from environment test commands through the `tests` evaluator. |
+| Reports | Generate JSON, Markdown, and HTML reports with pass rate, score, latency, token usage, prompt-cache metrics, tags, capabilities, risk levels, evaluators, tool calls, and errors. |
+| CI and release gates | Enforce minimum pass rate/score and fail-on-error checks locally or in GitHub Actions. |
+| Run comparison and matrix evals | Compare baseline/candidate runs, run side-by-side pairwise/preference evals, detect newly failed/passed cases and quality regressions, and run one dataset across multiple configs. |
+| Failure mining and regressions | Cluster failures, generate regression datasets, append/dedupe durable regression libraries, and preserve discovered failures for future runs. |
+| Evolution diagnostics | Analyze impact, diagnose likely root causes, score release risk, detect flaky behavior, and summarize PR/CI decisions for self-improvement loops. |
+| Promotion policy | Apply configurable promotion gates across quality, safety, state, latency, cost/token, tags, evaluators, capabilities, and risk levels. |
+| Human review queue | Sample failures, high-risk cases, judge-scored cases, environment failures, or random runs into JSONL/Markdown review queues. |
+| Human label import | Import expert labels, count automated-vs-human false passes/fails, summarize failure types, reviewers, and review coverage. |
+| Judge calibration | Compare automated/LLM judge results against human labels with agreement, precision, recall, F1, score error, breakdowns, and recommendations. |
+| Judge cache | Keep judge outputs reproducible and reviewable through `.agenteval/judge-cache` artifacts when enabled. |
+| Production monitoring ingest | Normalize production events into AgentEval artifacts and summarize health signals, errors, outcomes, tags, capabilities, risks, agents, models, latency, and tools. |
+| User feedback loop | Join user feedback to production events by `event_id` or `session_id`, quantify negative feedback, and identify unmatched feedback. |
+| Feedback-to-regression conversion | Convert negative or user-reported production failures into reviewable regression dataset cases without fabricating strong expected answers. |
+| Production coverage | Compare production traffic segments against eval datasets or run reports to find uncovered and underrepresented real-world scenarios. |
+| RSI governance | Check safety envelopes, eval integrity, self-modifications, anti-gaming, holdouts, capability frontiers, attribution, memory pollution, action risk, red-team coverage, and final RSI release decisions. |
+| Examples and templates | Provide example datasets, configs, production inputs, review labels, environment fixtures, promotion policies, experiments, and GitHub Actions workflows. |
+
 ## Features
 
 - YAML evaluation datasets with schema validation.
@@ -23,6 +52,7 @@ AgentEval is a Python evaluation platform for self-evolving / RSI (recursive sel
   - `minefield`
   - `cost`
   - `environment`
+  - `browser`
   - `tests`
 - Optional Claude-powered `rubric_judge` evaluator.
 - Foundational LLM judge metrics for DeepEval-style quality checks:
@@ -58,6 +88,7 @@ AgentEval is a Python evaluation platform for self-evolving / RSI (recursive sel
   - `--min-score`
   - `--fail-on-error`
 - Run-to-run comparison with `compare`, including quality, latency, token, capability/risk, newly failed/passed, and agent-version deltas.
+- Pairwise/preference comparison with `pairwise`, including deterministic output preference, optional Anthropic judge, win/tie/loss rates, and by-tag/capability/risk breakdowns.
 - Self-evolution workflow commands:
   - `failures` for failure mining and clustering
   - `regressions` for one-off regression generation or durable regression libraries with `--append-to --dedupe`
@@ -84,9 +115,10 @@ AgentEval is a Python evaluation platform for self-evolving / RSI (recursive sel
   - protected path violation detection
   - SQLite `database` environments with per-trial database copies and query result assertions
   - lightweight `http_api` environments with status/body/JSON checks against local or test services
+  - browser/GUI environments with DOM text, selector, attribute, URL/title, local storage, cookie, and screenshot artifacts
   - command/test outcome recording for setup/test/teardown phases
   - `environment.jsonl` artifacts and environment summaries in reports
-  - `environment` evaluator, coding-agent `tests` evaluator, and `env-validate` CLI
+  - `environment`, `browser`, coding-agent `tests` evaluator, and `env-validate` CLI
 - Human review and judge calibration workflow:
   - `review-sample` generates JSONL/Markdown queues from run artifacts
   - `review-import` imports expert labels and summarizes automated-vs-human mismatches
@@ -1381,6 +1413,7 @@ Agent evaluations can run each case repeat inside an isolated outcome-verificati
 - `filesystem`: copies a fixture directory into `runs/<run>/envs/<case_id>/<repeat>/workspace`, runs optional setup/test/teardown commands, snapshots files before and after the agent run, computes created/modified/deleted files, and records protected path violations.
 - `database`: creates an isolated SQLite database per trial, optionally copied from a fixture file, and records setup/test/teardown query results.
 - `http_api`: runs lightweight HTTP checks against a configured local/test service and records status, body, parsed JSON, and errors.
+- `browser`: copies a web fixture into an isolated workspace and uses optional Playwright-backed browser checks to capture final URL, title, DOM text/HTML, selector attributes, local storage, cookies, and screenshots.
 
 All environment records are stored in both `environment.jsonl` and `AgentRun.artifacts.environment`.
 
@@ -1479,6 +1512,62 @@ expected:
       max_http_failures: 0
 ```
 
+Browser/GUI outcome example:
+
+Browser checks use Playwright asynchronously inside the AgentEval runner. Playwright is optional so normal installs and non-browser CI jobs stay lightweight. If the optional dependency or Chromium browser binary is missing, AgentEval records a browser check error in `environment.jsonl` instead of crashing the entire run.
+
+```bash
+python -m pip install -e '.[browser]'
+python -m playwright install chromium
+```
+
+```yaml
+environment:
+  type: browser
+  fixture: examples/envs/browser_task
+  test_checks:
+    - path: index.html
+      wait_for_selector: "#status"
+      selector: "#status"
+      screenshot: true
+    - path: index.html
+      selector: "[data-testid=confirmation]"
+      attribute: "data-state"
+evaluators:
+  - type: browser
+```
+
+```yaml
+expected:
+  browser:
+    max_browser_failures: 0
+    required_url:
+      - contains: index.html
+    required_title:
+      - contains: AgentEval Browser Task
+    required_text:
+      - selector: "#status"
+        contains: Saved
+    forbidden_text:
+      - contains: Unhandled Error
+    required_selectors:
+      - "#status"
+    required_attributes:
+      - selector: "[data-testid=confirmation]"
+        attribute: data-state
+        value: complete
+    required_screenshots: 1
+```
+
+Run the browser example:
+
+```bash
+PYTHONPATH=src python -m cli run \
+  --dataset examples/datasets/browser_env.yaml \
+  --config examples/configs/browser_env_eval.yaml \
+  --out runs/browser
+```
+
 Validate the environment config without running agents:
 
 ```bash
@@ -1525,7 +1614,7 @@ PYTHONPATH=src python -m cli env-clean \
 
 Use `--keep-failures` to retain workspaces for failed cases during cleanup.
 
-The `environment` evaluator supports file assertions (`required_files`, `forbidden_files`, `required_modified_files`, `forbidden_modified_files`, `max_modified_files`, `no_deleted_files`), command assertions (`required_setup_success`, `required_test_success`, `required_teardown_success`, `required_command_success`, `required_command_stdout`, `forbidden_command_stdout`, `forbidden_command_failure`, `max_command_failures`), SQLite query assertions (`database.required_rows`, `database.forbidden_rows`, `database.required_query_success`, `database.max_query_failures`), and HTTP assertions (`http.required_status`, `http.required_json_paths`, `http.max_http_failures`). Command output and HTTP bodies are captured in `environment.jsonl` and truncated by `max_command_output_chars`. The `tests` evaluator reads phase=`test` commands from environment artifacts and provides coding-agent fail-to-pass/pass-to-pass gates via `expected.tests.fail_to_pass`, `expected.tests.pass_to_pass`, `require_all_test_commands_pass`, and `max_test_failures`. The harness intentionally avoids Docker, browser automation, and complex service orchestration for now; those are planned as future Environment Harness extensions.
+The `environment` evaluator supports file assertions (`required_files`, `forbidden_files`, `required_modified_files`, `forbidden_modified_files`, `max_modified_files`, `no_deleted_files`), command assertions (`required_setup_success`, `required_test_success`, `required_teardown_success`, `required_command_success`, `required_command_stdout`, `forbidden_command_stdout`, `forbidden_command_failure`, `max_command_failures`), SQLite query assertions (`database.required_rows`, `database.forbidden_rows`, `database.required_query_success`, `database.max_query_failures`), and HTTP assertions (`http.required_status`, `http.required_json_paths`, `http.max_http_failures`). Command output, HTTP bodies, and browser artifacts are captured in `environment.jsonl` and truncated by `max_command_output_chars`. The `browser` evaluator supports URL/title/text/selector/attribute/screenshot assertions through `expected.browser`. The `tests` evaluator reads phase=`test` commands from environment artifacts and provides coding-agent fail-to-pass/pass-to-pass gates via `expected.tests.fail_to_pass`, `expected.tests.pass_to_pass`, `require_all_test_commands_pass`, and `max_test_failures`. The harness intentionally avoids Docker and complex service orchestration for now; those are planned as future Environment Harness extensions.
 
 ## Human review and judge calibration
 
@@ -1639,6 +1728,46 @@ PYTHONPATH=src python -m cli production-coverage \
 ```
 
 Coverage compares tags, capability, risk level, channel, intent, and locale where available, and highlights uncovered or underrepresented production segments.
+
+## Pairwise preference eval
+
+Use `compare` for aggregate run metrics, and `pairwise` when you want side-by-side per-case output preference between a baseline and candidate run. Pairwise defaults to deterministic comparison, so it works without external API calls:
+
+```bash
+PYTHONPATH=src python -m cli pairwise \
+  --baseline runs/main \
+  --candidate runs/pr \
+  --out runs/pairwise \
+  --format markdown \
+  --format json \
+  --judge never
+```
+
+The report includes candidate win rate, baseline win rate, tie rate, needs-review count, per-case reasons, and by-tag/capability/risk-level breakdowns. Deterministic preference uses evaluator pass status, average score, failure count, run errors, and latency tolerance.
+
+For subjective output quality, enable the Anthropic pairwise judge explicitly:
+
+```bash
+ANTHROPIC_API_KEY=... PYTHONPATH=src python -m cli pairwise \
+  --baseline runs/main \
+  --candidate runs/pr \
+  --out runs/pairwise-judge \
+  --format markdown \
+  --format json \
+  --judge auto \
+  --judge-config examples/configs/pairwise_judge.yaml
+```
+
+`--judge auto` only judges ambiguous or high-risk cases; `--judge always` judges every matched case. Judge results can be cached under `.agenteval/judge-cache`, and cached pairwise judgements do not consume the configured `max_requests` live-judge budget. If `ANTHROPIC_API_KEY` is missing and `--judge-strict` is not set, AgentEval falls back to deterministic preference and records `judge_skipped_reason` in the report. CI gates can enforce preference quality:
+
+```bash
+PYTHONPATH=src python -m cli pairwise \
+  --baseline runs/main \
+  --candidate runs/pr \
+  --fail-under-candidate-win-rate 0.55 \
+  --fail-on-baseline-win-rate-over 0.20 \
+  --fail-on-needs-review
+```
 
 ## Matrix runs
 

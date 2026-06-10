@@ -54,6 +54,23 @@ class HttpCheckResult(BaseModel):
     duration_ms: int = 0
 
 
+class BrowserCheckResult(BaseModel):
+    phase: str
+    url: str | None = None
+    title: str | None = None
+    status: str = "ok"
+    selector: str | None = None
+    text: str = ""
+    html: str = ""
+    attribute: str | None = None
+    attribute_value: str | None = None
+    storage: dict[str, Any] = Field(default_factory=dict)
+    cookies: list[dict[str, Any]] = Field(default_factory=list)
+    screenshot_path: str | None = None
+    error: str | None = None
+    duration_ms: int = 0
+
+
 class EnvironmentSessionRecord(BaseModel):
     case_id: str
     repeat_index: int
@@ -66,3 +83,4 @@ class EnvironmentSessionRecord(BaseModel):
     commands: list[CommandResult] = Field(default_factory=list)
     database: list[DatabaseQueryResult] = Field(default_factory=list)
     http: list[HttpCheckResult] = Field(default_factory=list)
+    browser: list[BrowserCheckResult] = Field(default_factory=list)
