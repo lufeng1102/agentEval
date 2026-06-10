@@ -1514,6 +1514,8 @@ expected:
 
 Browser/GUI outcome example:
 
+Browser checks use Playwright asynchronously inside the AgentEval runner. Playwright is optional so normal installs and non-browser CI jobs stay lightweight. If the optional dependency or Chromium browser binary is missing, AgentEval records a browser check error in `environment.jsonl` instead of crashing the entire run.
+
 ```bash
 python -m pip install -e '.[browser]'
 python -m playwright install chromium
@@ -1756,7 +1758,7 @@ ANTHROPIC_API_KEY=... PYTHONPATH=src python -m cli pairwise \
   --judge-config examples/configs/pairwise_judge.yaml
 ```
 
-`--judge auto` only judges ambiguous or high-risk cases; `--judge always` judges every matched case. Judge results can be cached under `.agenteval/judge-cache`. CI gates can enforce preference quality:
+`--judge auto` only judges ambiguous or high-risk cases; `--judge always` judges every matched case. Judge results can be cached under `.agenteval/judge-cache`, and cached pairwise judgements do not consume the configured `max_requests` live-judge budget. If `ANTHROPIC_API_KEY` is missing and `--judge-strict` is not set, AgentEval falls back to deterministic preference and records `judge_skipped_reason` in the report. CI gates can enforce preference quality:
 
 ```bash
 PYTHONPATH=src python -m cli pairwise \
