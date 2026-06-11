@@ -28,6 +28,7 @@ AgentEval is a Python evaluation platform for self-evolving / RSI (recursive sel
 | User feedback loop | Join user feedback to production events by `event_id` or `session_id`, quantify negative feedback, and identify unmatched feedback. |
 | Feedback-to-regression conversion | Convert negative or user-reported production failures into reviewable regression dataset cases without fabricating strong expected answers. |
 | Production coverage | Compare production traffic segments against eval datasets or run reports to find uncovered and underrepresented real-world scenarios. |
+| Suite health governance | Audit eval suite ownership, provenance, grading completeness, duplicate cases, run-history saturation/flakiness, production coverage gaps, and high-risk human review evidence. |
 | RSI governance | Check safety envelopes, eval integrity, self-modifications, anti-gaming, holdouts, capability frontiers, attribution, memory pollution, action risk, red-team coverage, and final RSI release decisions. |
 | Examples and templates | Provide example datasets, configs, production inputs, review labels, environment fixtures, promotion policies, experiments, and GitHub Actions workflows. |
 
@@ -128,6 +129,7 @@ AgentEval is a Python evaluation platform for self-evolving / RSI (recursive sel
   - `feedback-ingest` joins user feedback to production events
   - `feedback-to-regressions` converts negative production feedback into regression datasets
   - `production-coverage` compares production segments against eval coverage
+- Eval suite lifecycle governance with `suite-health`, including owner/source/spec completeness, duplicate detection, run-history saturation/flakiness, production coverage gaps, and high-risk human review evidence.
 - Multi-config batch execution with `matrix`.
 - Prompt hash/version and agent version deltas in run manifests/comparisons.
 - pass@k/pass_all stability metrics for repeated runs.
@@ -1728,6 +1730,42 @@ PYTHONPATH=src python -m cli production-coverage \
 ```
 
 Coverage compares tags, capability, risk level, channel, intent, and locale where available, and highlights uncovered or underrepresented production segments.
+
+## Suite health / eval lifecycle governance
+
+Use `suite-health` to audit whether an eval dataset is maintainable as a living product asset. It checks static dataset governance and can optionally combine run history, production coverage, and human review evidence.
+
+Basic dataset health audit:
+
+```bash
+PYTHONPATH=src python -m cli suite-health \
+  --dataset examples/datasets/basic_agent_eval.yaml \
+  --out runs/suite-health.md \
+  --format markdown \
+  --format json
+```
+
+Integrated lifecycle audit:
+
+```bash
+PYTHONPATH=src python -m cli suite-health \
+  --dataset examples/datasets/basic_agent_eval.yaml \
+  --runs runs \
+  --production runs/production/production.json \
+  --human-review runs/human-review.json \
+  --out runs/suite-health.md \
+  --format markdown \
+  --format json
+```
+
+The report surfaces missing owner/source metadata, cases without expected assertions or rubrics, duplicate normalized task signatures, regression cases missing status, saturated cases that no longer provide signal, flaky run-history cases, production segments not covered by evals, and high-risk cases without review evidence. Use `--fail-on high` or another severity to make suite governance part of CI:
+
+```bash
+PYTHONPATH=src python -m cli suite-health \
+  --dataset examples/datasets/basic_agent_eval.yaml \
+  --runs runs \
+  --fail-on high
+```
 
 ## Pairwise preference eval
 

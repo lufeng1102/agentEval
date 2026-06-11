@@ -25,6 +25,7 @@ from evolution.pairwise import compare_pairwise, load_pairwise_config, write_pai
 from evolution.pr_summary import build_pr_summary, write_pr_summary_markdown
 from evolution.regression_status import mark_regression, summarize_regressions, update_regression_status, write_regression_status_json, write_regression_status_markdown
 from evolution.regressions import append_regression_dataset, generate_regression_dataset, write_regression_dataset
+from evolution.suite_health import SEVERITY_ORDER, analyze_suite_health, write_suite_health_json, write_suite_health_markdown
 from manifest import build_manifest, write_manifest
 from promotion import evaluate_promotion, load_promotion_policy, write_promotion_json, write_promotion_markdown
 from production import analyze_production_coverage, ingest_feedback, ingest_production_events, load_production_events, load_user_feedback, production_feedback_to_regressions, summarize_production, write_coverage_json, write_coverage_markdown, write_feedback_json, write_feedback_markdown, write_production_json, write_production_jsonl, write_production_markdown
@@ -802,6 +803,33 @@ def flakes(
         typer.echo(f"- {case_id}: pass_rate={stats.get('pass_rate', 0):.2%}, score_stddev={stats.get('score_stddev', 0):.2f}")
 
 
+@app.command("suite-health")
+def suite_health(
+    dataset: Path = typer.Option(..., "--dataset", "-d", help="Eval dataset YAML to inspect."),
+    runs: Path | None = typer.Option(None, "--runs", help="Optional run directory or parent directory with run subdirectories."),
+    production: Path | None = typer.Option(None, "--production", help="Optional production artifact/events file for coverage integration."),
+    human_review: Path | None = typer.Option(None, "--human-review", help="Optional human review JSON produced by review-import."),
+    out: Path = typer.Option(Path("runs/suite-health.md"), "--out", "-o", help="Output path for one format, or output stem when multiple formats are requested."),
+    formats: list[str] | None = typer.Option(None, "--format", help="Output format: markdown or json. Can be repeated."),
+    stale_days: int = typer.Option(90, "--stale-days", help="Staleness window for reviewed cases when dates are present."),
+    saturation_pass_rate: float = typer.Option(0.98, "--saturation-pass-rate", help="Pass-rate threshold for saturated run-history cases."),
+    fail_on: str = typer.Option("never", "--fail-on", help="Fail when issues at this severity or higher exist: low, medium, high, critical, or never."),
+) -> None:
+    """Analyze eval suite health, lifecycle metadata, run history, production coverage, and human review evidence."""
+    fail_on = _normalize_suite_health_fail_on(fail_on)
+    report = analyze_suite_health(dataset, runs_path=runs, production_path=production, human_review_path=human_review, stale_days=stale_days, saturation_pass_rate=saturation_pass_rate)
+    paths = _write_report_outputs(out, report, formats or ["markdown"], write_suite_health_markdown, write_suite_health_json)
+    summary = report["summary"]
+    typer.echo(
+        f"Suite health cases={summary['cases']}, issues={summary['issues']} "
+        f"(critical={summary['critical']}, high={summary['high']}, medium={summary['medium']}, low={summary['low']}). "
+        f"Reports: {', '.join(str(path) for path in paths)}"
+    )
+    if _suite_health_should_fail(summary, fail_on):
+        typer.echo(f"Suite health threshold failed: issues at severity >= {fail_on}", err=True)
+        raise typer.Exit(code=1)
+
+
 @app.command()
 def dashboard(
     runs: Path = typer.Option(..., "--runs", help="Directory containing run subdirectories with report.json files."),
@@ -979,6 +1007,19 @@ def _write_compare_outputs(out: Path, comparison: dict, formats: list[str]) -> l
             write_compare_html(path, comparison)
         output_paths.append(path)
     return output_paths
+
+
+def _normalize_suite_health_fail_on(fail_on: str) -> str:
+    if fail_on == "never" or fail_on in SEVERITY_ORDER:
+        return fail_on
+    raise typer.BadParameter("--fail-on must be one of: low, medium, high, critical, never")
+
+
+def _suite_health_should_fail(summary: dict, fail_on: str) -> bool:
+    if fail_on == "never":
+        return False
+    threshold = SEVERITY_ORDER[fail_on]
+    return any(int(summary.get(severity, 0) or 0) > 0 for severity, rank in SEVERITY_ORDER.items() if rank >= threshold)
 
 
 def _write_pairwise_outputs(out: Path, report: dict, formats: list[str]) -> list[Path]:
