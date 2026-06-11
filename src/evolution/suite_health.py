@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from collections import defaultdict
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -31,7 +32,7 @@ def analyze_suite_health(
     reviewed_cases = _reviewed_cases(human_review)
     issues: list[dict[str, Any]] = []
 
-    issues.extend(_static_issues(cases, dataset_metadata, reviewed_cases, Path(dataset_path)))
+    issues.extend(_static_issues(cases, dataset_metadata, reviewed_cases, Path(dataset_path), stale_days))
     issues.extend(_duplicate_issues(cases, duplicate_fields or ["input", "tags", "capability"]))
 
     run_health = _run_health(runs_path, cases, saturation_pass_rate) if runs_path else None
@@ -130,7 +131,7 @@ def write_suite_health_markdown(path: str | Path, report: dict[str, Any]) -> Non
     output.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def _static_issues(cases: list[dict[str, Any]], dataset_metadata: dict[str, Any], reviewed_cases: set[str], dataset_path: Path) -> list[dict[str, Any]]:
+def _static_issues(cases: list[dict[str, Any]], dataset_metadata: dict[str, Any], reviewed_cases: set[str], dataset_path: Path, stale_days: int) -> list[dict[str, Any]]:
     issues = []
     dataset_owner = dataset_metadata.get("owner")
     implicit_sources = [str(source) for source in dataset_metadata.get("sources", []) or []]
@@ -150,13 +151,41 @@ def _static_issues(cases: list[dict[str, Any]], dataset_metadata: dict[str, Any]
             issues.append(_issue("low", "coverage_metadata", case_id, "Case is missing capability metadata", {}, "Add metadata.capability for coverage and release analysis."))
         if not metadata.get("risk_level"):
             issues.append(_issue("low", "coverage_metadata", case_id, "Case is missing risk_level metadata", {}, "Add metadata.risk_level for risk-aware reporting."))
-        if risk in HIGH_RISK and case_id not in reviewed_cases and not (metadata.get("review_status") or metadata.get("last_reviewed_at")):
-            issues.append(_issue("high", "human_review", case_id, "High-risk case has no human review evidence", {"risk_level": risk}, "Add metadata.review_status/last_reviewed_at or include the case in human review artifacts."))
+        if risk in HIGH_RISK:
+            review_issue = _review_evidence_issue(case_id, metadata, reviewed_cases, stale_days)
+            if review_issue:
+                issues.append(review_issue)
         regression = metadata.get("regression") or {}
         if ("regression" in tags or regression) and not regression.get("status"):
             issues.append(_issue("medium", "regression", case_id, "Regression case is missing regression status", {}, "Set metadata.regression.status to active, fixed, flaky, ignored, or needs_review."))
     return issues
 
+def _review_evidence_issue(case_id: str, metadata: dict[str, Any], reviewed_cases: set[str], stale_days: int) -> dict[str, Any] | None:
+    if case_id in reviewed_cases or metadata.get("review_status"):
+        return None
+    reviewed_at = metadata.get("last_reviewed_at")
+    if not reviewed_at:
+        return _issue("high", "human_review", case_id, "High-risk case has no human review evidence", {}, "Add metadata.review_status/last_reviewed_at or include the case in human review artifacts.")
+    parsed = _parse_review_date(reviewed_at)
+    if parsed is None:
+        return _issue("high", "human_review", case_id, "High-risk case has invalid review date", {"last_reviewed_at": reviewed_at}, "Use ISO date format YYYY-MM-DD for metadata.last_reviewed_at.")
+    age_days = (date.today() - parsed).days
+    if age_days > stale_days:
+        return _issue("high", "human_review", case_id, "High-risk case review evidence is stale", {"last_reviewed_at": parsed.isoformat(), "age_days": age_days, "stale_days": stale_days}, "Refresh human review evidence or update metadata.last_reviewed_at after review.")
+    return None
+
+
+def _parse_review_date(value: Any) -> date | None:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if not isinstance(value, str):
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        return None
 
 def _duplicate_issues(cases: list[dict[str, Any]], fields: list[str]) -> list[dict[str, Any]]:
     grouped: dict[str, list[str]] = defaultdict(list)
@@ -186,6 +215,8 @@ def _run_health(runs_path: str | Path, cases: list[dict[str, Any]], saturation_p
             scores = [float(item.get("score", 0) or 0) for item in results]
             history[case_id].append({"run": str(run_dir), "passed": passed, "avg_score": sum(scores) / len(scores) if scores else 0})
     case_tags = {str(case.get("id")): set(case.get("tags") or []) for case in cases}
+    allowed_case_ids = set(case_tags)
+    history = {case_id: items for case_id, items in history.items() if case_id in allowed_case_ids}
     issues = []
     saturated = []
     flaky = []

@@ -93,6 +93,54 @@ def test_suite_health_integrates_production_coverage_and_human_review(tmp_path: 
     assert any(issue["category"] == "production_coverage" for issue in report["issues"])
 
 
+def test_suite_health_flags_stale_and_invalid_high_risk_review_dates(tmp_path: Path) -> None:
+    dataset = tmp_path / "dataset.yaml"
+    dataset.write_text(
+        "metadata:\n  owner: eval-team\n  sources: [seed]\n"
+        "cases:\n"
+        "  - id: stale\n    input: stale\n    expected:\n      answer: ok\n    metadata:\n      capability: safety\n      risk_level: high\n      last_reviewed_at: 2000-01-01\n"
+        "  - id: invalid\n    input: invalid\n    expected:\n      answer: ok\n    metadata:\n      capability: safety\n      risk_level: critical\n      last_reviewed_at: not-a-date\n",
+        encoding="utf-8",
+    )
+
+    report = analyze_suite_health(dataset, stale_days=90)
+
+    titles = {issue["title"] for issue in report["issues"]}
+    assert "High-risk case review evidence is stale" in titles
+    assert "High-risk case has invalid review date" in titles
+    assert report["summary"]["high_risk_without_review"] == 2
+
+
+def test_suite_health_run_history_ignores_cases_outside_dataset(tmp_path: Path) -> None:
+    dataset = tmp_path / "dataset.yaml"
+    dataset.write_text(
+        "metadata:\n  owner: eval-team\n  sources: [seed]\n"
+        "cases:\n"
+        "  - id: included\n    input: included\n    expected:\n      answer: ok\n    metadata:\n      capability: refunds\n      risk_level: low\n",
+        encoding="utf-8",
+    )
+    runs = tmp_path / "runs"
+    for index, outside_passed in enumerate([True, False, True], start=1):
+        run_dir = runs / f"run{index}"
+        run_dir.mkdir(parents=True)
+        report = {
+            "summary": {},
+            "results": [
+                {"case_id": "included", "evaluator": "contains", "passed": True, "score": 1.0},
+                {"case_id": "outside", "evaluator": "contains", "passed": outside_passed, "score": 1.0 if outside_passed else 0.0},
+            ],
+        }
+        (run_dir / "report.json").write_text(json.dumps(report), encoding="utf-8")
+        (run_dir / "traces.jsonl").write_text("", encoding="utf-8")
+        (run_dir / "manifest.json").write_text("{}", encoding="utf-8")
+
+    report = analyze_suite_health(dataset, runs_path=runs)
+
+    assert set(report["run_health"]["cases"]) == {"included"}
+    assert report["run_health"]["summary"]["cases_with_history"] == 1
+    assert all(issue.get("case_id") != "outside" for issue in report["issues"])
+
+
 def test_suite_health_writers(tmp_path: Path) -> None:
     dataset = tmp_path / "dataset.yaml"
     dataset.write_text("cases:\n  - id: c1\n    input: q\n    expected:\n      answer: a\n", encoding="utf-8")

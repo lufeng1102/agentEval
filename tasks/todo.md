@@ -7,7 +7,7 @@
   - Verify: `test -f tasks/plan.md && test -f tasks/todo.md`
   - Dependencies: None
 
-- [ ] Task 2: Harden suite-health governance slice
+- [x] Task 2: Harden suite-health governance slice
   - Acceptance: stale high-risk reviews are flagged; run-history issues ignore cases outside the audited dataset; invalid review dates produce clear issues; README documents review-date semantics.
   - Verify: `python -m pytest tests/test_suite_health.py tests/test_suite_health_cli.py`
   - Dependencies: Task 1

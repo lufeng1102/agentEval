@@ -1758,7 +1758,7 @@ PYTHONPATH=src python -m cli suite-health \
   --format json
 ```
 
-The report surfaces missing owner/source metadata, cases without expected assertions or rubrics, duplicate normalized task signatures, regression cases missing status, saturated cases that no longer provide signal, flaky run-history cases, production segments not covered by evals, and high-risk cases without review evidence. Use `--fail-on high` or another severity to make suite governance part of CI:
+The report surfaces missing owner/source metadata, cases without expected assertions or rubrics, duplicate normalized task signatures, regression cases missing status, saturated cases that no longer provide signal, flaky run-history cases, production segments not covered by evals, and high-risk cases without review evidence. High-risk cases can provide review evidence through human-review artifacts or case metadata such as `review_status` or `last_reviewed_at`; `last_reviewed_at` uses ISO date format `YYYY-MM-DD` and is considered stale after `--stale-days` days. Use `--fail-on high` or another severity to make suite governance part of CI:
 
 ```bash
 PYTHONPATH=src python -m cli suite-health \
