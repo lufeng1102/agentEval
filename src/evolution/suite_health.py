@@ -21,6 +21,7 @@ def analyze_suite_health(
     runs_path: str | Path | None = None,
     production_path: str | Path | None = None,
     human_review_path: str | Path | None = None,
+    reference_validation_path: str | Path | None = None,
     stale_days: int = 90,
     saturation_pass_rate: float = 0.98,
     duplicate_fields: list[str] | None = None,
@@ -29,10 +30,13 @@ def analyze_suite_health(
     cases = [case.model_dump(mode="json") for case in dataset.cases]
     dataset_metadata = dataset.metadata or {}
     human_review = _load_human_review(human_review_path)
+    reference_validation = _load_reference_validation(reference_validation_path)
     reviewed_cases = _reviewed_cases(human_review)
     issues: list[dict[str, Any]] = []
 
     issues.extend(_static_issues(cases, dataset_metadata, reviewed_cases, Path(dataset_path), stale_days))
+    issues.extend(_lifecycle_issues(cases, dataset_metadata))
+    issues.extend(_reference_validation_issues(cases, dataset_metadata, reference_validation))
     issues.extend(_duplicate_issues(cases, duplicate_fields or ["input", "tags", "capability"]))
 
     run_health = _run_health(runs_path, cases, saturation_pass_rate) if runs_path else None
@@ -54,6 +58,7 @@ def analyze_suite_health(
         "run_health": run_health,
         "production_coverage": production_coverage,
         "human_review": human_review,
+        "reference_validation": reference_validation,
         "config": {"stale_days": stale_days, "saturation_pass_rate": saturation_pass_rate, "duplicate_fields": duplicate_fields or ["input", "tags", "capability"]},
     }
 
@@ -158,7 +163,52 @@ def _static_issues(cases: list[dict[str, Any]], dataset_metadata: dict[str, Any]
         regression = metadata.get("regression") or {}
         if ("regression" in tags or regression) and not regression.get("status"):
             issues.append(_issue("medium", "regression", case_id, "Regression case is missing regression status", {}, "Set metadata.regression.status to active, fixed, flaky, ignored, or needs_review."))
+        if not _case_reference(case) and (risk in HIGH_RISK or _suite_type(dataset_metadata, case) in {"capability", "regression", "safety", "holdout"}):
+            issues.append(_issue("medium", "reference", case_id, "Case is missing reference solution", {"suite_type": _suite_type(dataset_metadata, case), "risk_level": risk}, "Add reference.final_output/tool_calls/artifacts or metadata.reference so graders can be audited."))
     return issues
+
+
+def _lifecycle_issues(cases: list[dict[str, Any]], dataset_metadata: dict[str, Any]) -> list[dict[str, Any]]:
+    issues = []
+    valid_suite_types = {"capability", "regression", "safety", "holdout", "mixed"}
+    suite_type = str(dataset_metadata.get("suite_type") or "").lower()
+    if suite_type and suite_type not in valid_suite_types:
+        issues.append(_issue("medium", "lifecycle", None, "Dataset has unknown suite_type", {"suite_type": suite_type}, "Use suite_type capability, regression, safety, holdout, or mixed."))
+    maturity = str(dataset_metadata.get("maturity") or "").lower()
+    if maturity and maturity not in {"draft", "active", "saturated", "graduated", "deprecated"}:
+        issues.append(_issue("low", "lifecycle", None, "Dataset has unknown maturity", {"maturity": maturity}, "Use maturity draft, active, saturated, graduated, or deprecated."))
+    target = dataset_metadata.get("target_pass_rate")
+    if target is not None:
+        try:
+            value = float(target)
+            if value < 0 or value > 1:
+                raise ValueError
+        except (TypeError, ValueError):
+            issues.append(_issue("medium", "lifecycle", None, "Dataset target_pass_rate is invalid", {"target_pass_rate": target}, "Set target_pass_rate to a number between 0 and 1."))
+    if suite_type in {"regression", "safety"} and target is None:
+        issues.append(_issue("medium", "lifecycle", None, "Regression/safety suite is missing target_pass_rate", {"suite_type": suite_type}, "Set metadata.target_pass_rate so promotion gates know the expected quality bar."))
+    if suite_type == "holdout":
+        for case in cases:
+            metadata = case.get("metadata") or {}
+            if not metadata.get("holdout") and "holdout" not in set(case.get("tags") or []):
+                issues.append(_issue("medium", "holdout", str(case.get("id")), "Holdout suite case is missing holdout marker", {}, "Add metadata.holdout=true or a holdout tag to make leakage checks explicit."))
+    return issues
+
+
+def _reference_validation_issues(cases: list[dict[str, Any]], dataset_metadata: dict[str, Any], validation: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not validation:
+        return []
+    issues = []
+    known_cases = {str(case.get("id")) for case in cases}
+    for item in validation.get("items", []) or []:
+        case_id = str(item.get("case_id"))
+        if case_id not in known_cases:
+            continue
+        if not item.get("passed"):
+            severity = "high" if _suite_type(dataset_metadata, {}) in {"regression", "safety"} else "medium"
+            issues.append(_issue(severity, "reference", case_id, "Reference solution failed validation", {"status": item.get("status"), "errors": item.get("errors") or []}, "Fix the reference solution, task specification, or grader before relying on this case."))
+    return issues
+
 
 def _review_evidence_issue(case_id: str, metadata: dict[str, Any], reviewed_cases: set[str], stale_days: int) -> dict[str, Any] | None:
     if case_id in reviewed_cases or metadata.get("review_status"):
@@ -257,6 +307,12 @@ def _load_human_review(path: str | Path | None) -> dict[str, Any] | None:
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
+def _load_reference_validation(path: str | Path | None) -> dict[str, Any] | None:
+    if not path:
+        return None
+    return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
 def _reviewed_cases(human_review: dict[str, Any] | None) -> set[str]:
     if not human_review:
         return set()
@@ -278,6 +334,10 @@ def _recommendations(issues: list[dict[str, Any]], production_coverage: dict[str
         recommendations.append("Add owner/source metadata so eval cases have clear accountability and provenance.")
     if "spec" in categories:
         recommendations.append("Add deterministic expected fields or rubrics for cases that cannot currently be graded clearly.")
+    if "reference" in categories:
+        recommendations.append("Add and validate reference solutions so task solvability and grader configuration can be audited.")
+    if "lifecycle" in categories:
+        recommendations.append("Declare suite_type, maturity, and target_pass_rate metadata so capability and regression suites can be governed differently.")
     if "flaky" in categories:
         recommendations.append("Investigate flaky cases before using this suite as a promotion gate.")
     if "saturation" in categories:
@@ -298,6 +358,9 @@ def _summary(cases: list[dict[str, Any]], issues: list[dict[str, Any]], run_heal
         "missing_owner": sum(1 for issue in issues if issue.get("title") == "Case is missing owner metadata"),
         "missing_source": sum(1 for issue in issues if issue.get("title") == "Case is missing source metadata"),
         "missing_expected_or_rubric": sum(1 for issue in issues if issue.get("category") == "spec"),
+        "missing_reference": sum(1 for issue in issues if issue.get("title") == "Case is missing reference solution"),
+        "failed_references": sum(1 for issue in issues if issue.get("title") == "Reference solution failed validation"),
+        "lifecycle_issues": sum(1 for issue in issues if issue.get("category") in {"lifecycle", "holdout"}),
         "duplicate_cases": sum(1 for issue in issues if issue.get("category") == "duplicate"),
         "saturated_cases": (run_health or {}).get("summary", {}).get("saturated_cases", 0),
         "flaky_cases": (run_health or {}).get("summary", {}).get("flaky_cases", 0),
@@ -311,6 +374,20 @@ def _collect_run_dirs(path: str | Path) -> list[Path]:
     if (root / "report.json").exists():
         return [root]
     return sorted(item for item in root.iterdir() if item.is_dir() and (item / "report.json").exists()) if root.exists() else []
+
+
+def _case_reference(case: dict[str, Any]) -> dict[str, Any]:
+    reference = case.get("reference")
+    if isinstance(reference, dict) and reference:
+        return reference
+    metadata = case.get("metadata") or {}
+    metadata_ref = metadata.get("reference")
+    return metadata_ref if isinstance(metadata_ref, dict) else {}
+
+
+def _suite_type(dataset_metadata: dict[str, Any], case: dict[str, Any]) -> str:
+    metadata = case.get("metadata") or {}
+    return str(metadata.get("suite_type") or dataset_metadata.get("suite_type") or "").lower()
 
 
 def _duplicate_key(case: dict[str, Any], fields: list[str]) -> str:

@@ -5,6 +5,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator
 
 Priority = Literal["low", "medium", "high", "critical"]
+FailureOwner = Literal["agent", "grader", "task", "environment", "unclear"]
 
 
 class ReviewItem(BaseModel):
@@ -28,6 +29,7 @@ class ReviewItem(BaseModel):
 
 
 class HumanLabel(BaseModel):
+    schema_version: str = "review_label_v1"
     review_id: str | None = None
     case_id: str
     repeat_index: int = 0
@@ -36,6 +38,18 @@ class HumanLabel(BaseModel):
     human_failure_type: str | None = None
     human_reason: str = ""
     rubric_dimension_scores: dict[str, float] = Field(default_factory=dict)
+    failure_owner: FailureOwner = "unclear"
+    valid_alternative_solution: bool = False
+    rubric_clarity_score: float | None = Field(default=None, ge=0, le=1)
+    recommended_action: str | None = None
+    adjudication_status: str | None = None
+    label_status: str | None = None
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    reviewer_notes: str | None = None
+    golden_candidate: bool = False
+    golden_status: str | None = None
+    policy_update: dict[str, Any] = Field(default_factory=dict)
+    regression_update: dict[str, Any] = Field(default_factory=dict)
     reviewer: str | None = None
     reviewed_at: str | None = None
 

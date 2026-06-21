@@ -1,9 +1,33 @@
+from types import SimpleNamespace
+
 import asyncio
 
 from agents.static_adapter import StaticAgentAdapter
-from schemas import EvalCase, ToolCall
-from simulators import ScriptedUserSimulator
+from schemas import ChatMessage, EvalCase, ToolCall
+from simulators import LLMUserSimulator, ScriptedUserSimulator
 from tools import MockToolRuntime
+
+
+class FakeMessages:
+    def __init__(self, response):
+        self.response = response
+        self.requests = []
+
+    async def create(self, **request):
+        self.requests.append(request)
+        return self.response
+
+
+class FakeClient:
+    def __init__(self, response):
+        self.messages = FakeMessages(response)
+
+
+def text_response(text: str):
+    return SimpleNamespace(
+        content=[SimpleNamespace(type="text", text=text)],
+        usage=SimpleNamespace(input_tokens=7, output_tokens=8, cache_creation_input_tokens=0, cache_read_input_tokens=1),
+    )
 
 
 def test_scripted_user_simulator_builds_messages() -> None:
@@ -13,6 +37,31 @@ def test_scripted_user_simulator_builds_messages() -> None:
     messages = simulator.messages(case.input)
 
     assert [message.content for message in messages] == ["start", "turn 1", "turn 2"]
+
+
+def test_llm_user_simulator_builds_request_and_returns_usage() -> None:
+    client = FakeClient(text_response("请继续处理"))
+    simulator = LLMUserSimulator({"type": "llm", "persona": "angry customer", "goal": "refund", "hidden_facts": {"order_id": "A100"}}, client=client)
+
+    result = asyncio.run(simulator.next_turn("需要确认", {"orders": {"A100": "paid"}}, [ChatMessage(role="user", content="我要退款")]))
+
+    assert result["reply"] == "请继续处理"
+    assert result["usage"].input_tokens == 7
+    assert result["usage"].cache_read_input_tokens == 1
+    request = client.messages.requests[0]
+    assert request["model"] == "claude-opus-4-8"
+    assert "angry customer" in request["messages"][0]["content"]
+    assert result["artifact"]["type"] == "llm"
+
+
+def test_llm_user_simulator_stop_phrase_returns_no_reply() -> None:
+    client = FakeClient(text_response("DONE"))
+    simulator = LLMUserSimulator({"type": "llm", "stop_phrases": ["done"]}, client=client)
+
+    result = asyncio.run(simulator.next_turn("完成了吗", {}, []))
+
+    assert result["reply"] is None
+    assert result["artifact"]["stop"] is True
 
 
 def test_mock_tool_runtime_applies_outputs() -> None:

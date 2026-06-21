@@ -85,13 +85,21 @@ def _summary_lines(title: str, summary: dict[str, Any]) -> list[str]:
     ]
 
 
-def _write_json(path: str | Path, payload: dict[str, Any]) -> None:
+def write_report_json(path: str | Path, payload: dict[str, Any]) -> None:
     output = Path(path)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def _write_text(path: str | Path, lines: list[str]) -> None:
+def write_report_text(path: str | Path, lines: list[str]) -> None:
     output = Path(path)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _write_json(path: str | Path, payload: dict[str, Any]) -> None:
+    write_report_json(path, payload)
+
+
+def _write_text(path: str | Path, lines: list[str]) -> None:
+    write_report_text(path, lines)

@@ -25,6 +25,7 @@ AgentEval is a Python evaluation platform for self-evolving / RSI (recursive sel
 | Judge calibration | Compare automated/LLM judge results against human labels with agreement, precision, recall, F1, score error, breakdowns, and recommendations. |
 | Judge cache | Keep judge outputs reproducible and reviewable through `.agenteval/judge-cache` artifacts when enabled. |
 | Production monitoring ingest | Normalize production events into AgentEval artifacts and summarize health signals, errors, outcomes, tags, capabilities, risks, agents, models, latency, and tools. |
+| Trace import and replay | Normalize AgentEval, production, OpenTelemetry/OpenInference, Langfuse, and Phoenix-style traces; replay observed traces through evaluators without calling an agent; and convert failed traces into regression datasets. |
 | User feedback loop | Join user feedback to production events by `event_id` or `session_id`, quantify negative feedback, and identify unmatched feedback. |
 | Feedback-to-regression conversion | Convert negative or user-reported production failures into reviewable regression dataset cases without fabricating strong expected answers. |
 | Production coverage | Compare production traffic segments against eval datasets or run reports to find uncovered and underrepresented real-world scenarios. |
@@ -122,6 +123,7 @@ AgentEval is a Python evaluation platform for self-evolving / RSI (recursive sel
   - `environment`, `browser`, coding-agent `tests` evaluator, and `env-validate` CLI
 - Human review and judge calibration workflow:
   - `review-sample` generates JSONL/Markdown queues from run artifacts
+  - `transcripts` builds reviewer-friendly Markdown/JSON transcript reports from traces, results, tool calls, dynamic state, and environment artifacts
   - `review-import` imports expert labels and summarizes automated-vs-human mismatches
   - `judge-calibration` reports agreement, false passes/fails, precision/recall/F1, score error, and recommendations
 - Production monitoring and feedback loop:
@@ -357,6 +359,7 @@ evaluators:
   "messages": [{"role": "user", "content": "用一句话说明水的化学式。"}],
   "final_output": "水的化学式是 H2O。",
   "tool_calls": [],
+  "spans": [],
   "latency_ms": 250,
   "usage": {
     "input_tokens": 0,
@@ -379,11 +382,14 @@ Important fields:
 | `messages` | Input/output messages captured by the adapter. |
 | `final_output` | Text evaluated by output-based evaluators. |
 | `tool_calls` | Tool trajectory with `name`, `input`, `output`, and optional `error`. |
+| `spans` | Optional normalized trace/span records imported from AgentEval, production, OpenTelemetry/OpenInference, Langfuse, or Phoenix-style traces. |
 | `latency_ms` | Run latency used in reports and cost/trajectory checks. |
 | `usage` | Token and prompt-cache usage. |
 | `errors` | Adapter or runtime errors. Non-empty errors indicate the run may not reflect agent behavior. |
 | `raw_response` | Optional raw provider response for debugging. |
 | `artifacts` | Adapter-defined extra data, such as `final_state`. |
+
+`spans` are optional so older `traces.jsonl` files remain valid. A normalized span has fields such as `span_id`, `trace_id`, `parent_span_id`, `name`, `kind`, `status`, `latency_ms`, `input`, `output`, `error`, `attributes`, and `events`. The `span` evaluator can assert required/forbidden span names or kinds, maximum error spans, maximum span count, latency, and required attributes.
 
 ### Result protocol: `results.jsonl`
 
@@ -589,11 +595,11 @@ PYTHONPATH=src python -m cli run \
   --out runs/claude
 ```
 
-The Claude adapter uses the official `anthropic` Python SDK. When a case defines `scenario.tools`, the adapter sends those mock tools to Claude, executes returned `tool_use` blocks with `MockToolRuntime`, sends `tool_result` blocks back to Claude, and records tool outputs/state in the trace. When a case defines a scripted `scenario.user_simulator`, the adapter executes those turns as real multi-turn conversation history rather than appending all user turns at once.
+The Claude adapter uses the official `anthropic` Python SDK. When a case defines `scenario.tools`, the adapter sends those mock tools to Claude, executes returned `tool_use` blocks with `MockToolRuntime`, sends `tool_result` blocks back to Claude, and records tool outputs/state in the trace. When a case defines `scenario.user_simulator`, AgentEval can run scripted, rule-based, or LLM-generated user turns for multi-turn scenarios.
 
 ## Dynamic agent evaluation
 
-Dynamic scenarios let AgentEval run deterministic multi-turn evaluations with mock tools, state changes, rule-based user replies, and stop conditions. Enable this by setting `scenario.mode: dynamic` in a case. The dynamic runtime is supported by the `static` and `anthropic` adapters.
+Dynamic scenarios let AgentEval run multi-turn evaluations with mock tools, state changes, scripted/rule-based/LLM user replies, and stop conditions. Enable this by setting `scenario.mode: dynamic` in a case. The dynamic runtime is supported by the `static` and `anthropic` adapters.
 
 ```yaml
 cases:
@@ -642,6 +648,7 @@ Supported first-pass dynamic features:
 - `user_simulator.type: rule_based` with:
   - `output_contains` rules, which match against the latest assistant output.
   - `state_matches` rules, which match against the current runtime state after tool execution.
+- `user_simulator.type: llm` for realistic conversational evals. Common fields are `model`, `persona`, `goal`, `hidden_facts`, `instructions`, `max_tokens`, `stop_phrases`, `thinking`, and `output_config`. LLM simulator token usage is merged into run usage and simulator replies are summarized under `AgentRun.artifacts.dynamic.simulator_turns`.
 - tool `mock_output`, `state_updates`, and `dynamic_output: {type: state_lookup, path: ...}`.
   - `state_lookup` paths can use input templates such as `${input.order_id}`.
   - Missing state lookup paths return `null` as the tool output instead of failing the run.
@@ -651,12 +658,41 @@ Supported first-pass dynamic features:
   - `final_state_matches`
 - dynamic trace artifacts under `AgentRun.artifacts.dynamic`, including:
   - `turns`: assistant output and tool calls per dynamic turn.
+  - `simulator_turns`: generated user-simulator replies and usage metadata when applicable.
   - `state_history`: state snapshots after each turn.
   - `stop_reason`: why the dynamic interaction stopped.
   - `final_state`: the final runtime state.
 - usage aggregation across dynamic turns, including input/output and cache token counters.
 
-When no stop condition matches, the runtime asks the rule-based simulator for the next user turn. If no simulator is configured or no rule matches, the run stops with `stop_reason: user_simulator_exhausted`.
+When no stop condition matches, the runtime asks the configured simulator for the next user turn. If no simulator is configured, no rule matches, or an LLM simulator returns an empty/stop-phrase reply, the run stops with `stop_reason: user_simulator_exhausted`.
+
+LLM user simulator example (requires `ANTHROPIC_API_KEY` when used with the default Anthropic client):
+
+```yaml
+scenario:
+  mode: dynamic
+  max_turns: 4
+  user_simulator:
+    type: llm
+    model: claude-opus-4-8
+    persona: "frustrated customer"
+    goal: "get a refund for order A100"
+    hidden_facts:
+      order_id: A100
+      paid_amount: 89.00
+    instructions: "Ask follow-up questions if the agent needs identity verification."
+    stop_phrases: [DONE]
+```
+
+Generate a reviewer-friendly transcript report after any run:
+
+```bash
+PYTHONPATH=src python -m cli transcripts \
+  --run runs/dynamic \
+  --out runs/dynamic/transcripts.md \
+  --format markdown \
+  --format json
+```
 
 Run the included example:
 
@@ -1622,26 +1658,25 @@ The `environment` evaluator supports file assertions (`required_files`, `forbidd
 
 AgentEval can turn a run into a human review queue, import expert labels, and calibrate automated/LLM judge results against those labels. This is useful when `rubric_judge`, `trajectory_judge`, or judge metrics are used as release signals and need periodic human validation.
 
-Generate a review queue from a run:
+Generate a review queue from a run. JSONL is the durable annotation contract; HTML is a static reviewer workbench with copyable label templates:
 
 ```bash
 PYTHONPATH=src python -m cli review-sample \
   --run runs/pr \
   --out runs/pr/review-queue.jsonl \
   --format jsonl \
-  --format markdown \
-  --strategy failures \
-  --strategy low-score \
+  --format html \
+  --strategy active \
   --strategy high-risk \
   --limit 50
 ```
 
-Supported sampling strategies are `failures`, `low-score`, `high-risk`, `safety`, `judge`, `environment`, and `random`. The queue contains stable `review_id` values, case inputs, expected fields, rubrics, agent output, trace snippets, environment artifacts, evaluator results, priority, and suggested review reasons.
+Supported sampling strategies are `failures`, `low-score`, `high-risk`, `safety`, `judge`, `environment`, `active`, and `random`. The `active` strategy prioritizes uncertain or high-risk cases using near-threshold scores, evaluator disagreement, judge involvement, safety/environment signals, and trace errors. Active selections include `metadata.review.active_score` and `metadata.review.active_reasons`. The queue contains stable `review_id` values, case inputs, expected fields, rubrics, agent output, trace snippets, environment artifacts, evaluator results, priority, and suggested review reasons.
 
 Human labels are JSONL records. `review_id` is preferred; `(case_id, repeat_index)` is used as a fallback:
 
 ```json
-{"review_id":"rev_abc123","case_id":"refund_001","repeat_index":0,"human_passed":false,"human_score":0.25,"human_failure_type":"tool_argument_error","human_reason":"Agent called the refund tool with the wrong order id.","reviewer":"domain-expert-a","reviewed_at":"2026-06-09T00:00:00Z"}
+{"schema_version":"review_label_v1","review_id":"rev_abc123","case_id":"refund_001","repeat_index":0,"human_passed":false,"human_score":0.25,"human_failure_type":"tool_argument_error","human_reason":"Agent called the refund tool with the wrong order id.","failure_owner":"agent","recommended_action":"add_regression","label_status":"adjudicated","confidence":0.9,"golden_candidate":true,"regression_update":{"required_facts":["Use the correct order id"]},"reviewer":"domain-expert-a","reviewed_at":"2026-06-09T00:00:00Z"}
 ```
 
 Import labels and summarize human review outcomes:
@@ -1657,16 +1692,42 @@ PYTHONPATH=src python -m cli review-import \
 
 The human review summary reports labeled/missing counts, human pass rate, average score, failure types, reviewer counts, and automated-vs-human mismatches (`false_pass` and `false_fail`).
 
-Calibrate automated and LLM judge results against human labels:
+Analyze duplicate reviewer labels and adjudication needs:
+
+```bash
+PYTHONPATH=src python -m cli review-disagreements \
+  --queue runs/pr/review-queue.jsonl \
+  --labels reviews/labels.jsonl \
+  --out runs/pr/disagreements.md \
+  --format markdown \
+  --format json
+```
+
+Promote adjudicated labels into a durable golden-label JSONL artifact. Submitted labels are skipped by default unless `--allow-submitted` is passed:
+
+```bash
+PYTHONPATH=src python -m cli golden-labels \
+  --queue runs/pr/review-queue.jsonl \
+  --labels reviews/labels.jsonl \
+  --append-to reviews/golden-labels.jsonl \
+  --dedupe \
+  --format jsonl \
+  --format markdown
+```
+
+Calibrate automated and LLM judge results against human labels or golden labels:
 
 ```bash
 PYTHONPATH=src python -m cli judge-calibration \
   --run runs/pr \
-  --human-review runs/pr/human-review.json \
+  --golden-labels reviews/golden-labels.jsonl \
+  --queue runs/pr/review-queue.jsonl \
   --out runs/pr/judge-calibration.md \
   --format markdown \
   --format json
 ```
+
+You can also pass `--human-review runs/pr/human-review.json` to calibrate directly from `review-import` output.
 
 The calibration report includes agreement rate, false passes, false fails, precision/recall/F1, mean absolute score error, by-evaluator breakdowns, top disagreements, and recommendations such as tightening thresholds, splitting broad rubrics, or adding deterministic outcome evaluators.
 
@@ -1707,16 +1768,19 @@ PYTHONPATH=src python -m cli feedback-ingest \
   --format markdown
 ```
 
-Convert negative/user-reported production feedback into regression cases:
+Convert negative/user-reported production feedback into regression cases. Reviewed or golden labels can enrich the generated case metadata and expected fields, while `--policy-update-out` writes recommendation-only promotion/evaluator policy guidance:
 
 ```bash
 PYTHONPATH=src python -m cli feedback-to-regressions \
   --events examples/production/events.jsonl \
   --feedback examples/production/feedback.jsonl \
-  --out runs/production/regressions.yaml
+  --review-labels reviews/golden-labels.jsonl \
+  --golden-only \
+  --out runs/production/regressions.yaml \
+  --policy-update-out runs/production/policy-updates.md
 ```
 
-The generated regression cases are tagged with `production`, `feedback`, and `regression`, preserve production metadata, and default to `review_status: needs_review` when feedback does not provide a precise expected answer.
+The generated regression cases are tagged with `production`, `feedback`, and `regression`, preserve production metadata, and default to `review_status: needs_review` when feedback does not provide a precise expected answer. With reviewed labels, generated cases include review provenance and `review_status: reviewed`. Policy update output is intentionally recommendation-only and does not mutate promotion policy files.
 
 Check whether production traffic segments are covered by an eval dataset or run report:
 
@@ -1730,6 +1794,70 @@ PYTHONPATH=src python -m cli production-coverage \
 ```
 
 Coverage compares tags, capability, risk level, channel, intent, and locale where available, and highlights uncovered or underrepresented production segments.
+
+### Trace import, replay, and trace-derived regressions
+
+AgentEval can also ingest observed traces directly and replay them through evaluators without calling the agent again. This is useful when production behavior has already been captured by AgentEval, OpenTelemetry/OpenInference, Langfuse, Phoenix-style exports, or normalized production events.
+
+Import and normalize trace/span data:
+
+```bash
+PYTHONPATH=src python -m cli trace-import \
+  --input examples/production/traces-otel.jsonl \
+  --source otel \
+  --out runs/trace-smoke/import.json \
+  --format json \
+  --format jsonl \
+  --format markdown
+```
+
+Supported `--source` values are `auto`, `agenteval`, `production`, `otel`, `openinference`, `langfuse`, and `phoenix`. Unknown vendor fields are preserved in span `attributes` or trace `metadata` where possible.
+
+Replay imported traces through configured evaluators without invoking an agent adapter:
+
+```bash
+PYTHONPATH=src python -m cli trace-replay \
+  --traces runs/trace-smoke/import.jsonl \
+  --source agenteval \
+  --config examples/configs/trace_replay.yaml \
+  --out runs/trace-smoke/replay \
+  --dataset-out runs/trace-smoke/replay-dataset.yaml
+```
+
+`trace-replay` writes normal AgentEval run artifacts under `--out`: `manifest.json`, `traces.jsonl`, `results.jsonl`, and configured reports. The optional `--dataset-out` file captures generated replay cases for auditability or future runs.
+
+Convert failed/error traces into reviewable regression cases:
+
+```bash
+PYTHONPATH=src python -m cli trace-to-regressions \
+  --traces runs/trace-smoke/import.jsonl \
+  --source agenteval \
+  --out runs/trace-smoke/regressions.yaml \
+  --only-errors
+```
+
+Trace-derived regressions preserve trace provenance and avoid inventing strong expected answers. They add a rubric and `production_trace`/`spans` expectations so humans or judge evaluators can refine them into durable regression tests.
+
+Use the `span` evaluator for trace/span contracts:
+
+```yaml
+evaluators:
+  - type: span
+
+# In a case expected block:
+expected:
+  spans:
+    required_kinds: [agent, tool]
+    required_names: [order_lookup]
+    forbidden_names: [delete_user]
+    max_error_spans: 0
+    max_spans: 20
+    max_latency_ms: 10000
+    required_attributes:
+      - key: openinference.span.kind
+        value: TOOL
+        match_mode: exact
+```
 
 ## Suite health / eval lifecycle governance
 
@@ -1836,6 +1964,48 @@ Example GitHub Actions step:
       --min-score 0.8 \
       --fail-on-error
 ```
+
+For baseline/candidate release governance in CI, generate comparison, diagnosis, decision, and PR-summary artifacts:
+
+```bash
+PYTHONPATH=src python -m cli run \
+  --dataset examples/datasets/basic_agent_eval.yaml \
+  --config examples/configs/static_eval.yaml \
+  --out runs/ci-baseline
+
+PYTHONPATH=src python -m cli run \
+  --dataset examples/datasets/basic_agent_eval.yaml \
+  --config examples/configs/static_eval.yaml \
+  --out runs/ci-candidate
+
+PYTHONPATH=src python -m cli compare \
+  --baseline runs/ci-baseline \
+  --candidate runs/ci-candidate \
+  --out runs/ci-candidate/compare \
+  --format json \
+  --format markdown
+
+PYTHONPATH=src python -m cli diagnose \
+  --baseline runs/ci-baseline \
+  --candidate runs/ci-candidate \
+  --out runs/ci-candidate/diagnosis.json \
+  --format json
+
+PYTHONPATH=src python -m cli decide \
+  --baseline runs/ci-baseline \
+  --candidate runs/ci-candidate \
+  --policy examples/policies/promotion.yaml \
+  --out runs/ci-candidate/decision.json \
+  --format json
+
+PYTHONPATH=src python -m cli pr-summary \
+  --decision runs/ci-candidate/decision.json \
+  --diagnosis runs/ci-candidate/diagnosis.json \
+  --compare runs/ci-candidate/compare.json \
+  --out runs/ci-candidate/pr-comment.md
+```
+
+`examples/ci/github-actions-agenteval.yml` contains a fuller template for this flow. Upload the `runs/` directory as a workflow artifact so `report.json`, traces, diagnostics, decisions, and `pr-comment.md` are available from the PR.
 
 ## Prompt caching notes
 

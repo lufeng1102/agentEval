@@ -40,3 +40,13 @@ def test_production_cli_flow(tmp_path):
     assert coverage.exit_code == 0, coverage.output
     assert (tmp_path / "coverage.md").exists()
     assert (tmp_path / "coverage.json").exists()
+
+    ab_events = tmp_path / "ab-events.jsonl"
+    ab_events.write_text("\n".join([json.dumps({"event_id": "a1", "input": "q", "variant": "control", "task_success": True}), json.dumps({"event_id": "b1", "input": "q", "variant": "candidate", "errors": ["boom"], "task_success": False})]) + "\n", encoding="utf-8")
+    ab = runner.invoke(app, ["ab-test", "--events", str(ab_events), "--baseline-variant", "control", "--out", str(tmp_path / "ab.json"), "--format", "json"])
+    assert ab.exit_code == 0, ab.output
+    assert json.loads((tmp_path / "ab.json").read_text(encoding="utf-8"))["summary"]["variants"] == 2
+
+    drift = runner.invoke(app, ["production-drift", "--baseline", str(events), "--candidate", str(ab_events), "--dataset", str(dataset), "--out", str(tmp_path / "drift.json"), "--format", "json", "--min-delta", "0.1"])
+    assert drift.exit_code == 0, drift.output
+    assert "drift_segments" in json.loads((tmp_path / "drift.json").read_text(encoding="utf-8"))["summary"]

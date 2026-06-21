@@ -1,0 +1,3 @@
+{"trace_id":"otel-trace-1","span_id":"span-agent","name":"agent","kind":"agent","status":"ok","attributes":{"openinference.span.kind":"AGENT"},"input":"Refund order A100","output":"Looking up order"}
+{"trace_id":"otel-trace-1","span_id":"span-tool","parent_span_id":"span-agent","name":"order_lookup","kind":"tool","status":"ok","attributes":{"openinference.span.kind":"TOOL"},"input":{"order_id":"A100"},"output":{"status":"paid"}}
+{"trace_id":"otel-trace-2","span_id":"span-tool-error","name":"order_cancel","kind":"tool","status":"error","error":"timeout","attributes":{"openinference.span.kind":"TOOL"},"input":{"order_id":"B200"}}

@@ -3,9 +3,10 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
+from agents.anthropic_utils import case_messages, case_tools, merge_usage
 from evaluators.matching import get_path, value_matches
 from schemas import AgentRun, ChatMessage, EvalCase, RunContext, ToolCall, Usage
-from simulators import RuleBasedUserSimulator
+from simulators import build_user_simulator, next_simulated_turn
 from tools import MockToolRuntime
 
 
@@ -16,16 +17,17 @@ class DynamicScenarioRuntime:
         self.adapter = adapter
 
     async def run(self, case: EvalCase, context: RunContext) -> AgentRun:
-        messages = _case_messages(case)
+        messages = case_messages(case)
         api_messages = list(messages)
-        tools = _case_tools(case)
+        tools = case_tools(case)
         runtime = MockToolRuntime.from_case(case.scenario.get("tools"), initial_state=case.scenario.get("initial_state"))
-        simulator = RuleBasedUserSimulator.from_case(case)
+        simulator = build_user_simulator(case)
         max_turns = int(case.scenario.get("max_turns", 1) or 1)
         all_tool_calls: list[ToolCall] = []
         usage = Usage()
         raw_responses: list[dict[str, Any]] = []
         turns: list[dict[str, Any]] = []
+        simulator_turns: list[dict[str, Any]] = []
         state_history: list[dict[str, Any]] = []
         final_output = ""
         stop_reason: str | None = None
@@ -34,7 +36,7 @@ class DynamicScenarioRuntime:
             final_output, new_messages, turn_calls, turn_usage, turn_raw = await self.adapter.complete_turn(api_messages, tools, context, runtime)
             applied_calls, state = runtime.apply(turn_calls)
             all_tool_calls.extend(applied_calls)
-            usage = _merge_usage(usage, turn_usage)
+            usage = merge_usage(usage, turn_usage)
             raw_responses.extend(turn_raw)
             api_messages = list(new_messages)
             messages = list(new_messages)
@@ -53,11 +55,15 @@ class DynamicScenarioRuntime:
             if turn_index + 1 >= max_turns:
                 stop_reason = "max_turns"
                 break
-            user_turn = simulator.next_turn(final_output, state) if simulator else None
-            if not user_turn:
+            simulated = await next_simulated_turn(simulator, final_output, state, messages)
+            user_turn = simulated.get("reply")
+            usage = merge_usage(usage, simulated.get("usage") or Usage())
+            if simulated.get("artifact"):
+                simulator_turns.append(simulated["artifact"])
+            if user_turn is None or user_turn == "":
                 stop_reason = "user_simulator_exhausted"
                 break
-            user_message = ChatMessage(role="user", content=user_turn)
+            user_message = ChatMessage(role="user", content=str(user_turn))
             api_messages.append(user_message)
             messages.append(user_message)
 
@@ -65,6 +71,7 @@ class DynamicScenarioRuntime:
             "final_state": runtime.state,
             "dynamic": {
                 "turns": turns,
+                "simulator_turns": simulator_turns,
                 "state_history": state_history,
                 "stop_reason": stop_reason or "max_turns",
                 "final_state": runtime.state,
@@ -79,28 +86,6 @@ class DynamicScenarioRuntime:
             raw_response={"responses": raw_responses},
             artifacts=artifacts,
         )
-
-
-def _case_messages(case: EvalCase) -> list[ChatMessage]:
-    if isinstance(case.input, str):
-        return [ChatMessage(role="user", content=case.input)]
-    return list(case.input)
-
-
-def _case_tools(case: EvalCase) -> list[dict[str, Any]]:
-    tools = []
-    for tool in case.scenario.get("tools", []) or []:
-        name = str(tool.get("name", ""))
-        if not name:
-            continue
-        tools.append(
-            {
-                "name": name,
-                "description": str(tool.get("description") or f"Mock tool {name}"),
-                "input_schema": tool.get("input_schema") or {"type": "object", "properties": {}},
-            }
-        )
-    return tools
 
 
 def _stop_reason(case: EvalCase, output: str, tool_calls: list[ToolCall], state: dict[str, Any]) -> str | None:
@@ -121,12 +106,3 @@ def _state_matches(state: dict[str, Any], expected: dict[str, Any]) -> bool:
         if not exists or not value_matches(value, actual, "exact"):
             return False
     return True
-
-
-def _merge_usage(left: Usage, right: Usage) -> Usage:
-    return Usage(
-        input_tokens=left.input_tokens + right.input_tokens,
-        output_tokens=left.output_tokens + right.output_tokens,
-        cache_creation_input_tokens=left.cache_creation_input_tokens + right.cache_creation_input_tokens,
-        cache_read_input_tokens=left.cache_read_input_tokens + right.cache_read_input_tokens,
-    )

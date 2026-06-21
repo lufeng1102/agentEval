@@ -9,6 +9,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 MessageRole = Literal["user", "assistant", "system", "tool"]
 ToolInputMatchMode = Literal["exact", "contains"]
 TrajectoryMatchMode = Literal["required", "strict", "unordered", "subset", "superset"]
+SpanKind = Literal["llm", "tool", "retrieval", "embedding", "api", "agent", "chain", "custom"]
+SpanStatus = Literal["ok", "error", "unset"]
 
 
 class ChatMessage(BaseModel):
@@ -28,6 +30,7 @@ class EvalCase(BaseModel):
     rubric: str | None = None
     tags: list[str] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    reference: dict[str, Any] = Field(default_factory=dict)
     timeout_seconds: float | None = None
     evaluators: list[str] | None = None
 
@@ -104,12 +107,64 @@ class ToolCall(BaseModel):
     error: str | None = None
 
 
+class TraceSpan(BaseModel):
+    span_id: str
+    trace_id: str | None = None
+    parent_span_id: str | None = None
+    name: str
+    kind: SpanKind | str = "custom"
+    start_time: str | None = None
+    end_time: str | None = None
+    latency_ms: float | None = None
+    status: SpanStatus | str = "unset"
+    input: Any = None
+    output: Any = None
+    error: str | None = None
+    attributes: dict[str, Any] = Field(default_factory=dict)
+    events: list[dict[str, Any]] = Field(default_factory=list)
+
+    @field_validator("span_id", "name")
+    @classmethod
+    def span_fields_must_not_be_empty(cls, value: str) -> str:
+        if not str(value).strip():
+            raise ValueError("span id and name must not be empty")
+        return value
+
+
+class AgentTrace(BaseModel):
+    trace_id: str
+    case_id: str | None = None
+    session_id: str | None = None
+    user_id_hash: str | None = None
+    agent_id: str | None = None
+    agent_version: str | None = None
+    source: str | None = None
+    input: str | list[ChatMessage] | None = None
+    final_output: str = ""
+    messages: list[ChatMessage] = Field(default_factory=list)
+    spans: list[TraceSpan] = Field(default_factory=list)
+    tool_calls: list[ToolCall] = Field(default_factory=list)
+    usage: Usage = Field(default_factory=Usage)
+    latency_ms: float = 0
+    errors: list[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("trace_id")
+    @classmethod
+    def trace_id_must_not_be_empty(cls, value: str) -> str:
+        if not str(value).strip():
+            raise ValueError("trace_id must not be empty")
+        return value
+
+
 class AgentRun(BaseModel):
     case_id: str
     repeat_index: int = 0
     messages: list[ChatMessage] = Field(default_factory=list)
     final_output: str = ""
     tool_calls: list[ToolCall] = Field(default_factory=list)
+    spans: list[TraceSpan] = Field(default_factory=list)
     latency_ms: float = 0
     usage: Usage = Field(default_factory=Usage)
     errors: list[str] = Field(default_factory=list)

@@ -56,6 +56,9 @@ class HttpCheckResult(BaseModel):
 
 class BrowserCheckResult(BaseModel):
     phase: str
+    check_type: str = "page"
+    assertion_passed: bool | None = None
+    assertion_reason: str | None = None
     url: str | None = None
     title: str | None = None
     status: str = "ok"
@@ -67,6 +70,8 @@ class BrowserCheckResult(BaseModel):
     storage: dict[str, Any] = Field(default_factory=dict)
     cookies: list[dict[str, Any]] = Field(default_factory=list)
     screenshot_path: str | None = None
+    trace_path: str | None = None
+    video_path: str | None = None
     error: str | None = None
     duration_ms: int = 0
 

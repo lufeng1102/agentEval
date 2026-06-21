@@ -6,6 +6,7 @@ from typing import Any
 
 import anthropic
 
+from agents.anthropic_utils import case_messages, case_tools, extract_text, extract_usage, merge_usage
 from config import AgentConfig
 from schemas import AgentRun, ChatMessage, EvalCase, RunContext, ToolCall, Usage
 from simulators import ScriptedUserSimulator
@@ -26,10 +27,10 @@ class ClaudeAgentAdapter:
             return await DynamicScenarioRuntime(self).run(case, context)
 
         started = time.perf_counter()
-        api_messages = [_message_to_api(message) for message in _case_messages(case)]
-        trace_messages = list(_case_messages(case))
+        api_messages = [_message_to_api(message) for message in case_messages(case)]
+        trace_messages = list(case_messages(case))
         scripted_turns = _scripted_turns(case)
-        tools = _case_tools(case)
+        tools = case_tools(case)
         runtime = MockToolRuntime.from_case(case.scenario.get("tools"), initial_state=case.scenario.get("initial_state"))
         tool_calls: list[ToolCall] = []
         usage = Usage()
@@ -39,7 +40,7 @@ class ClaudeAgentAdapter:
         try:
             final_output, api_messages, trace_messages, turn_calls, turn_usage, turn_raw = await self._complete_turn(api_messages, trace_messages, tools, runtime)
             tool_calls.extend(turn_calls)
-            usage = _merge_usage(usage, turn_usage)
+            usage = merge_usage(usage, turn_usage)
             raw_responses.extend(turn_raw)
 
             for user_turn in scripted_turns:
@@ -47,7 +48,7 @@ class ClaudeAgentAdapter:
                 trace_messages.append(ChatMessage(role="user", content=user_turn))
                 final_output, api_messages, trace_messages, turn_calls, turn_usage, turn_raw = await self._complete_turn(api_messages, trace_messages, tools, runtime)
                 tool_calls.extend(turn_calls)
-                usage = _merge_usage(usage, turn_usage)
+                usage = merge_usage(usage, turn_usage)
                 raw_responses.extend(turn_raw)
         except anthropic.APIError as exc:
             return AgentRun(
@@ -98,9 +99,9 @@ class ClaudeAgentAdapter:
 
         for _ in range(max_iterations + 1):
             response = await self.client.messages.create(**self._build_request(api_messages, tools))
-            usage = _merge_usage(usage, _extract_usage(response))
+            usage = merge_usage(usage, extract_usage(response))
             raw_responses.append(_to_dict(response))
-            text = _extract_text(response.content)
+            text = extract_text(response.content)
             tool_use_blocks = _extract_tool_use_blocks(response.content)
             if not tool_use_blocks:
                 api_messages.append({"role": "assistant", "content": text})
@@ -167,43 +168,13 @@ class ClaudeAgentAdapter:
         return request
 
 
-def _case_messages(case: EvalCase) -> list[ChatMessage]:
-    if isinstance(case.input, str):
-        return [ChatMessage(role="user", content=case.input)]
-    return list(case.input)
-
-
 def _scripted_turns(case: EvalCase) -> list[str]:
     simulator = ScriptedUserSimulator.from_case(case)
     return simulator.turns if simulator else []
 
 
-def _case_tools(case: EvalCase) -> list[dict[str, Any]]:
-    tools = []
-    for tool in case.scenario.get("tools", []) or []:
-        name = str(tool.get("name", ""))
-        if not name:
-            continue
-        tools.append(
-            {
-                "name": name,
-                "description": str(tool.get("description") or f"Mock tool {name}"),
-                "input_schema": tool.get("input_schema") or {"type": "object", "properties": {}},
-            }
-        )
-    return tools
-
-
 def _message_to_api(message: ChatMessage) -> dict[str, Any]:
     return {"role": message.role, "content": message.content}
-
-
-def _extract_text(content: list[Any]) -> str:
-    parts: list[str] = []
-    for block in content:
-        if getattr(block, "type", None) == "text":
-            parts.append(getattr(block, "text", ""))
-    return "".join(parts).strip()
 
 
 def _extract_tool_use_blocks(content: list[Any]) -> list[dict[str, Any]]:
@@ -218,27 +189,6 @@ def _extract_tool_use_blocks(content: list[Any]) -> list[dict[str, Any]]:
                 }
             )
     return calls
-
-
-def _extract_usage(response: Any) -> Usage:
-    usage = getattr(response, "usage", None)
-    if usage is None:
-        return Usage()
-    return Usage(
-        input_tokens=getattr(usage, "input_tokens", 0) or 0,
-        output_tokens=getattr(usage, "output_tokens", 0) or 0,
-        cache_creation_input_tokens=getattr(usage, "cache_creation_input_tokens", 0) or 0,
-        cache_read_input_tokens=getattr(usage, "cache_read_input_tokens", 0) or 0,
-    )
-
-
-def _merge_usage(left: Usage, right: Usage) -> Usage:
-    return Usage(
-        input_tokens=left.input_tokens + right.input_tokens,
-        output_tokens=left.output_tokens + right.output_tokens,
-        cache_creation_input_tokens=left.cache_creation_input_tokens + right.cache_creation_input_tokens,
-        cache_read_input_tokens=left.cache_read_input_tokens + right.cache_read_input_tokens,
-    )
 
 
 def _to_dict(response: Any) -> dict[str, Any]:

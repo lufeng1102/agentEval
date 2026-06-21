@@ -29,6 +29,7 @@ class PreparedBrowserEnvironment:
     browser_headless: bool
     browser_viewport: dict[str, Any]
     browser_screenshot: bool
+    browser_trace: bool = False
 
     @property
     def root(self) -> Path:
@@ -63,11 +64,21 @@ class PreparedBrowserEnvironment:
             async with async_playwright() as playwright:
                 browser = await playwright.chromium.launch(headless=self.browser_headless)
                 context = await browser.new_context(viewport=self.browser_viewport or None)
+                if self.browser_trace:
+                    await context.tracing.start(screenshots=True, snapshots=True, sources=True)
                 page = await context.new_page()
                 try:
                     for index, check in enumerate(checks):
                         self.record.browser.append(await _run_browser_check(page, context, self.root, self.base_url, phase, index, check, self.browser_timeout_seconds, self.browser_screenshot, self.max_command_output_chars))
                 finally:
+                    if self.browser_trace:
+                        traces_dir = self.root.parent / "traces"
+                        traces_dir.mkdir(parents=True, exist_ok=True)
+                        trace_path = traces_dir / f"{phase}.zip"
+                        await context.tracing.stop(path=str(trace_path))
+                        for check in self.record.browser:
+                            if check.phase == phase and (check.trace_path is None or check.trace_path == "pending"):
+                                check.trace_path = str(trace_path)
                     await context.close()
                     await browser.close()
         except Exception as exc:
@@ -133,6 +144,7 @@ def prepare_browser_environment(case: EvalCase, repeat_index: int, output_dir: s
         browser_headless=bool(merged.get("browser_headless", True)),
         browser_viewport=dict(viewport) if isinstance(viewport, dict) else {"width": 1280, "height": 720},
         browser_screenshot=bool(merged.get("browser_screenshot", False)),
+        browser_trace=bool(merged.get("browser_trace", False)),
     )
 
 
@@ -152,6 +164,8 @@ async def _run_browser_check(page, context, root: Path, base_url: str | None, ph
     selector = spec.get("selector")
     attribute = spec.get("attribute")
     screenshot_path = None
+    trace_path = None
+    check_type = str(spec.get("type") or spec.get("check_type") or "page")
     title = None
     text = ""
     html = ""
@@ -181,10 +195,12 @@ async def _run_browser_check(page, context, root: Path, base_url: str | None, ph
             screenshot_file = screenshots_dir / f"{phase}-{index}.png"
             await page.screenshot(path=str(screenshot_file), full_page=bool(spec.get("full_page", True)))
             screenshot_path = str(screenshot_file)
+        if bool(spec.get("trace", False)):
+            trace_path = "pending"
     except Exception as exc:  # keep suite running; evaluator decides pass/fail
         status = "error"
         error = f"{exc.__class__.__name__}: {exc}"
-    return BrowserCheckResult(phase=phase, url=page.url or target_url, title=title, status=status, selector=str(selector) if selector else None, text=text, html=html, attribute=str(attribute) if attribute else None, attribute_value=attribute_value, storage=storage, cookies=cookies, screenshot_path=screenshot_path, error=error, duration_ms=int((time.perf_counter() - started) * 1000))
+    return BrowserCheckResult(phase=phase, check_type=check_type, url=page.url or target_url, title=title, status=status, selector=str(selector) if selector else None, text=text, html=html, attribute=str(attribute) if attribute else None, attribute_value=attribute_value, storage=storage, cookies=cookies, screenshot_path=screenshot_path, trace_path=trace_path, error=error, duration_ms=int((time.perf_counter() - started) * 1000))
 
 
 def _resolve_url(root: Path, base_url: str | None, spec: dict[str, Any]) -> str | None:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from evaluators.matching import value_matches
+from evaluators.matching import get_path, value_matches
 from schemas import AgentRun, EvalCase, EvalResult
 
 
@@ -20,6 +20,7 @@ class BrowserEvaluator:
         checks: list[bool] = []
         failed_checks = [check for check in browser if check.get("error") or check.get("status") == "error"]
         screenshots = [check for check in browser if check.get("screenshot_path")]
+        traces = [check for check in browser if check.get("trace_path")]
 
         if expected.get("max_browser_failures") is not None:
             max_failures = int(expected["max_browser_failures"])
@@ -76,6 +77,49 @@ class BrowserEvaluator:
             if not ok:
                 violations.append(f"browser screenshots {len(screenshots)} below required {minimum}")
 
+        if expected.get("required_traces") is not None:
+            minimum = int(expected["required_traces"])
+            ok = len(traces) >= minimum
+            checks.append(ok)
+            if not ok:
+                violations.append(f"browser traces {len(traces)} below required {minimum}")
+
+        for spec in expected.get("required_storage", []) or []:
+            match_spec = dict(spec)
+            storage_path = str(match_spec.get("key") or match_spec.get("path") or "")
+            if "path" in match_spec and not any(key in match_spec for key in ["url", "selector", "attribute", "phase"]):
+                match_spec.pop("path", None)
+            matched = _matching_browser_checks(browser, match_spec)
+            expected_value = spec.get("value")
+            mode = str(spec.get("match_mode") or "exact")
+            ok = False
+            for check in matched:
+                storage = check.get("storage") or {}
+                if "path" in spec:
+                    exists, actual = get_path(storage, storage_path)
+                else:
+                    exists, actual = storage_path in storage, storage.get(storage_path)
+                if exists and value_matches(expected_value, actual, mode):
+                    ok = True
+                    break
+            checks.append(ok)
+            if not ok:
+                violations.append(f"required browser storage not matched: {storage_path}")
+
+        tool_choice = expected.get("tool_choice") or {}
+        if tool_choice:
+            tool_names = {call.name for call in run.tool_calls}
+            for name in tool_choice.get("required_tools", []) or []:
+                ok = name in tool_names
+                checks.append(ok)
+                if not ok:
+                    violations.append(f"required browser/computer-use tool not called: {name}")
+            for name in tool_choice.get("forbidden_tools", []) or []:
+                ok = name not in tool_names
+                checks.append(ok)
+                if not ok:
+                    violations.append(f"forbidden browser/computer-use tool called: {name}")
+
         passed = not violations
         score = sum(1 for item in checks if item) / len(checks) if checks else (1.0 if passed else 0.0)
         return EvalResult(
@@ -88,6 +132,7 @@ class BrowserEvaluator:
                 "browser_checks": len(browser),
                 "browser_failures": len(failed_checks),
                 "screenshots": len(screenshots),
+                "traces": len(traces),
                 "violations": violations,
             },
             failure_type=None if passed else "browser_violation",

@@ -1,0 +1,9 @@
+agent:
+  provider: static
+  static_response: unused during trace replay
+
+evaluators:
+  - type: span
+
+report:
+  formats: [json, markdown, html]

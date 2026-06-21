@@ -134,17 +134,42 @@ PYTHONPATH=src python -m cli matrix \
   --out runs/matrix
 ```
 
+Import, replay, and mine regressions from production or vendor traces:
+
+```bash
+PYTHONPATH=src python -m cli trace-import \
+  --input examples/production/traces-otel.jsonl \
+  --source otel \
+  --out runs/trace-smoke/import.json \
+  --format json \
+  --format jsonl \
+  --format markdown
+
+PYTHONPATH=src python -m cli trace-replay \
+  --traces runs/trace-smoke/import.jsonl \
+  --source agenteval \
+  --config examples/configs/trace_replay.yaml \
+  --out runs/trace-smoke/replay
+
+PYTHONPATH=src python -m cli trace-to-regressions \
+  --traces runs/trace-smoke/import.jsonl \
+  --source agenteval \
+  --out runs/trace-smoke/regressions.yaml \
+  --only-errors
+```
+
 CI currently installs with `pip install -e '.[dev]'`, runs `python -m pytest`, then runs the static AgentEval smoke test with `--min-pass-rate 0.5 --min-score 0.5 --fail-on-error`.
 
 ## Architecture notes
 
-- `src/schemas.py` contains the core contracts: `EvalDataset`, `EvalCase`, `AgentRun`, `ToolCall`, `Usage`, `EvalResult`, and `RunContext`. Prefer extending these contracts deliberately because traces, results, and reports depend on them.
+- `src/schemas.py` contains the core contracts: `EvalDataset`, `EvalCase`, `AgentRun`, `AgentTrace`, `TraceSpan`, `ToolCall`, `Usage`, `EvalResult`, and `RunContext`. Prefer extending these contracts deliberately because traces, results, and reports depend on them.
 - `src/config.py` defines the YAML config model: `agent`, `runner`, `evaluators`, and `report`. Dataset loading and config loading both use Pydantic validation around YAML files.
 - `src/cli.py` is the orchestration entry point. It loads dataset/config, builds the agent adapter from `agent.provider`, builds evaluator instances, writes `manifest.json`, emits reports, and enforces CLI thresholds.
 - `src/runners/executor.py` is responsible for concurrency, per-case timeout, retries, repeats, writing `traces.jsonl`, and writing `results.jsonl`. Adapter exceptions are converted into `AgentRun.errors` so the full suite can continue.
 - `src/agents/base.py` defines the adapter protocol. Built-ins are `static` and `anthropic`; new providers should return a complete `AgentRun` rather than exposing provider-specific response shapes to evaluators.
 - `src/evaluators/__init__.py` is the evaluator factory. Built-ins include `contains`, `exact_match`, `trajectory`, `safety`, `json_schema`, `regex`, `tool_output`, `cost`, `minefield`, `state`, `trajectory_judge`, `rubric_judge`, foundational judge metrics (`answer_relevancy`, `faithfulness`, `context_relevancy`, `context_precision`, `context_recall`, `task_completion`, `hallucination`, `conversation_quality`), and imported plugin evaluators.
 - `src/reporters/` summarizes cases, runs, and evaluator results into `report.json`, `report.md`, and `report.html`. `report.json` is the machine-readable artifact for automation.
+- `src/traces/` normalizes AgentEval, production, OpenTelemetry/OpenInference, Langfuse, and Phoenix-style traces into `AgentTrace`, converts traces to replayable `AgentRun`/`EvalCase` pairs, and generates trace-derived regression datasets.
 - `src/compare.py` and the `matrix` command compare existing run directories by reading their reports; they do not rerun agents except when the matrix command creates its per-config runs.
 - `src/evolution/` and `src/promotion.py` power the self-evolution loop: failure mining, regression dataset generation, manifest version deltas, and promotion policy gates.
 - `src/rsi/` contains RSI-specific governance analyzers for self-modification review, safety envelope/eval integrity, anti-gaming and holdout analysis, capability frontier tracking, attribution, evolution-loop metrics, memory pollution, action risk, and RSI red teaming.
@@ -167,6 +192,7 @@ A dataset is a YAML object with `metadata` and `cases`. Each case maps to `EvalC
 - `regex.include` / `regex.exclude` for `regex`
 - `required_tools`, `forbidden_tools`, `max_tool_calls`, `max_latency_ms`, and `reference_trajectory` for `trajectory`
 - `tool_outputs` for `tool_output`
+- `spans.required_kinds`, `spans.required_names`, `spans.forbidden_names`, `spans.max_error_spans`, `spans.max_spans`, `spans.max_latency_ms`, and `spans.required_attributes` for span/trace replay evaluation
 - `final_state` and `forbidden_state` for `state`
 - `minefields` for forbidden tools, outputs, arguments, or state mutations
 

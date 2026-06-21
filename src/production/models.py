@@ -12,12 +12,17 @@ class ProductionEvent(BaseModel):
     user_id_hash: str | None = None
     agent_id: str | None = None
     agent_version: str | None = None
+    variant: str | None = None
+    experiment_id: str | None = None
+    trace_id: str | None = None
     model: str | None = None
     input: str | list[dict[str, Any]]
     final_output: str = ""
     messages: list[dict[str, Any]] = Field(default_factory=list)
     tool_calls: list[dict[str, Any]] = Field(default_factory=list)
     outcome: dict[str, Any] = Field(default_factory=dict)
+    task_success: bool | None = None
+    user_outcome: str | None = None
     usage: dict[str, Any] = Field(default_factory=dict)
     latency_ms: float | None = None
     errors: list[str] = Field(default_factory=list)

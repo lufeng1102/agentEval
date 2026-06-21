@@ -141,7 +141,40 @@ def test_suite_health_run_history_ignores_cases_outside_dataset(tmp_path: Path) 
     assert all(issue.get("case_id") != "outside" for issue in report["issues"])
 
 
-def test_suite_health_writers(tmp_path: Path) -> None:
+def test_suite_health_integrates_reference_validation_and_lifecycle(tmp_path: Path) -> None:
+    dataset = tmp_path / "dataset.yaml"
+    dataset.write_text(
+        "metadata:\n  owner: eval-team\n  sources: [seed]\n  suite_type: regression\n  maturity: active\n"
+        "cases:\n"
+        "  - id: c1\n    input: q\n    expected:\n      answer: ok\n    metadata:\n      capability: core\n      risk_level: low\n      regression:\n        status: active\n"
+        "  - id: c2\n    input: q2\n    expected:\n      answer: ok\n    reference:\n      final_output: ok\n    metadata:\n      capability: core\n      risk_level: low\n      regression:\n        status: active\n",
+        encoding="utf-8",
+    )
+    reference = tmp_path / "reference.json"
+    reference.write_text(
+        json.dumps(
+            {
+                "summary": {"cases": 2, "failed": 1},
+                "items": [
+                    {"case_id": "c1", "status": "missing", "passed": False, "errors": ["missing"]},
+                    {"case_id": "c2", "status": "passed", "passed": True, "errors": []},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = analyze_suite_health(dataset, reference_validation_path=reference)
+
+    titles = {issue["title"] for issue in report["issues"]}
+    assert "Regression/safety suite is missing target_pass_rate" in titles
+    assert "Case is missing reference solution" in titles
+    assert "Reference solution failed validation" in titles
+    assert report["summary"]["missing_reference"] == 1
+    assert report["summary"]["failed_references"] == 1
+    assert report["summary"]["lifecycle_issues"] == 1
+
+
     dataset = tmp_path / "dataset.yaml"
     dataset.write_text("cases:\n  - id: c1\n    input: q\n    expected:\n      answer: a\n", encoding="utf-8")
     report = analyze_suite_health(dataset)

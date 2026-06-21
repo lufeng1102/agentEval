@@ -12,6 +12,7 @@ from evaluators.json_schema import JsonSchemaEvaluator
 from evaluators.minefield import MinefieldEvaluator
 from evaluators.regex import RegexEvaluator
 from evaluators.safety import SafetyEvaluator
+from evaluators.span import SpanEvaluator
 from evaluators.state import StateEvaluator
 from evaluators.tool_output import ToolOutputEvaluator
 from evaluators.trajectory import TrajectoryEvaluator
@@ -35,6 +36,8 @@ def build_evaluator(config: EvaluatorConfig) -> Evaluator:
         return TrajectoryEvaluator()
     if config.type == "safety":
         return SafetyEvaluator()
+    if config.type in {"span", "trace_span"}:
+        return SpanEvaluator()
     if config.type == "json_schema":
         return JsonSchemaEvaluator()
     if config.type == "regex":
@@ -86,6 +89,7 @@ __all__ = [
     "MinefieldEvaluator",
     "RegexEvaluator",
     "SafetyEvaluator",
+    "SpanEvaluator",
     "StateEvaluator",
     "ToolOutputEvaluator",
     "TrajectoryEvaluator",

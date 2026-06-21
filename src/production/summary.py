@@ -19,6 +19,7 @@ def summarize_production(events: list[ProductionEvent], feedback: list[UserFeedb
         "error_rate": sum(1 for event in events if event.errors) / len(events) if events else 0,
         "with_outcome": sum(1 for event in events if event.outcome),
         "outcome_coverage": sum(1 for event in events if event.outcome) / len(events) if events else 0,
+        "task_success_rate": sum(1 for event in events if event.task_success is True) / sum(1 for event in events if event.task_success is not None) if any(event.task_success is not None for event in events) else 0,
         "feedback": len(feedback),
         "feedback_rate": len({item.event_id for item in feedback if item.event_id}) / len(events) if events else 0,
         "negative_feedback": len(negative),
@@ -33,6 +34,8 @@ def summarize_production(events: list[ProductionEvent], feedback: list[UserFeedb
         "by_locale": _metadata_counts(events, "locale"),
         "by_model": dict(Counter(event.model or "unknown" for event in events)),
         "by_agent_version": dict(Counter(event.agent_version or "unknown" for event in events)),
+        "by_variant": dict(Counter(event.variant or event.metadata.get("variant") or "unknown" for event in events)),
+        "by_experiment": dict(Counter(event.experiment_id or event.metadata.get("experiment_id") or "unknown" for event in events)),
         "feedback_categories": dict(Counter(item.category or "uncategorized" for item in feedback)),
         "example_event_ids": [event.event_id for event in events[:10]],
     }

@@ -68,6 +68,11 @@ class EnvironmentConfig(BaseModel):
     command_timeout_seconds: float = 120
     max_command_output_chars: int = 20000
     retain_workspaces: str = "always"
+    backend: str = "local"
+    container_image: str | None = None
+    resource_limits: dict[str, Any] = Field(default_factory=dict)
+    shard_index: int | None = None
+    shard_count: int | None = None
 
 
 class EvaluatorConfig(BaseModel):

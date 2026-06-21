@@ -8,6 +8,21 @@ from runners.dynamic import DynamicScenarioRuntime
 from schemas import AgentRun, ChatMessage, EvalCase, RunContext, ToolCall, Usage
 
 
+class FakeLLMUserSimulator:
+    def __init__(self, replies):
+        self.replies = list(replies)
+        self.calls = 0
+
+    async def next_turn(self, assistant_output, state, messages=None):
+        self.calls += 1
+        reply = self.replies.pop(0)
+        return {
+            "reply": reply,
+            "usage": Usage(input_tokens=5, output_tokens=6),
+            "artifact": {"type": "llm", "reply": reply, "turn_index": self.calls - 1},
+        }
+
+
 class ScriptedTurnAdapter:
     def __init__(self, turns: list[AgentRun]):
         self.turns = list(turns)
@@ -49,6 +64,34 @@ def tool_response(tool_id: str, name: str, tool_input: dict):
         model_dump=lambda mode="json": {"content": [{"type": "tool_use", "id": tool_id, "name": name, "input": tool_input}]},
     )
 
+
+def test_dynamic_runtime_uses_llm_user_simulator(monkeypatch, tmp_path) -> None:
+    simulator = FakeLLMUserSimulator(["继续"])
+    monkeypatch.setattr("runners.dynamic.build_user_simulator", lambda case: simulator)
+    adapter = ScriptedTurnAdapter([AgentRun(case_id="c1", final_output="第一轮"), AgentRun(case_id="c1", final_output="完成")])
+    case = EvalCase(id="c1", input="开始", scenario={"mode": "dynamic", "max_turns": 2, "user_simulator": {"type": "llm"}, "stop_conditions": [{"type": "output_contains", "text": "完成"}]})
+
+    run = asyncio.run(DynamicScenarioRuntime(adapter).run(case, RunContext(output_dir=tmp_path)))
+
+    assert [message.role for message in run.messages] == ["user", "assistant", "user", "assistant"]
+    assert run.messages[2].content == "继续"
+    assert run.usage.input_tokens == 5
+    assert run.usage.output_tokens == 6
+    assert run.artifacts["dynamic"]["simulator_turns"][0]["type"] == "llm"
+    assert run.artifacts["dynamic"]["stop_reason"] == "output_contains"
+
+
+def test_dynamic_runtime_stops_when_llm_user_simulator_returns_empty(monkeypatch, tmp_path) -> None:
+    simulator = FakeLLMUserSimulator([""])
+    monkeypatch.setattr("runners.dynamic.build_user_simulator", lambda case: simulator)
+    adapter = ScriptedTurnAdapter([AgentRun(case_id="c1", final_output="需要继续")])
+    case = EvalCase(id="c1", input="开始", scenario={"mode": "dynamic", "max_turns": 3, "user_simulator": {"type": "llm"}})
+
+    run = asyncio.run(DynamicScenarioRuntime(adapter).run(case, RunContext(output_dir=tmp_path)))
+
+    assert run.artifacts["dynamic"]["stop_reason"] == "user_simulator_exhausted"
+    assert run.artifacts["dynamic"]["simulator_turns"][0]["reply"] == ""
+    assert adapter.calls == 1
 
 def test_dynamic_runtime_stops_when_final_state_matches(tmp_path) -> None:
     adapter = ScriptedTurnAdapter(

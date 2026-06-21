@@ -5,7 +5,7 @@ from environments.browser import _resolve_url, prepare_browser_environment
 from environments.models import BrowserCheckResult
 from evaluators import BrowserEvaluator, build_evaluator
 from reporters.json_reporter import summarize
-from schemas import AgentRun, EvalCase, EvalResult
+from schemas import AgentRun, EvalCase, EvalResult, ToolCall
 
 
 def test_browser_evaluator_passes_text_url_title_attribute_and_screenshot() -> None:
@@ -44,7 +44,39 @@ def test_browser_evaluator_passes_text_url_title_attribute_and_screenshot() -> N
     assert result.metrics["screenshots"] == 1
 
 
-def test_browser_evaluator_fails_forbidden_text_and_missing_selector() -> None:
+def test_browser_evaluator_checks_storage_trace_and_tool_choice() -> None:
+    case = EvalCase(
+        id="browser2",
+        input="check UI",
+        expected={
+            "browser": {
+                "required_storage": [{"key": "cart", "value": "full"}],
+                "required_traces": 1,
+                "tool_choice": {"required_tools": ["screenshot"], "forbidden_tools": ["raw_dom_dump"]},
+            }
+        },
+    )
+    run = AgentRun(
+        case_id="browser2",
+        tool_calls=[ToolCall(name="screenshot")],
+        artifacts={"environment": {"browser": [{"phase": "test", "status": "ok", "storage": {"cart": "full", "auth": {"token": "abc"}}, "trace_path": "trace.zip", "error": None}]}},
+    )
+
+    result = asyncio.run(BrowserEvaluator().evaluate(case, run))
+
+    assert result.passed is True
+    assert result.metrics["traces"] == 1
+
+
+def test_browser_evaluator_checks_nested_storage_path() -> None:
+    case = EvalCase(id="browser3", input="check UI", expected={"browser": {"required_storage": [{"path": "auth.token", "value": "abc"}]}})
+    run = AgentRun(case_id="browser3", artifacts={"environment": {"browser": [{"phase": "test", "status": "ok", "storage": {"auth": {"token": "abc"}}, "error": None}]}})
+
+    result = asyncio.run(BrowserEvaluator().evaluate(case, run))
+
+    assert result.passed is True
+
+
     case = EvalCase(id="browser1", input="check UI", expected={"browser": {"forbidden_text": [{"contains": "Error"}], "required_selectors": ["#status"]}})
     run = AgentRun(case_id="browser1", artifacts={"environment": {"browser": [{"phase": "test", "url": "file:///tmp/index.html", "status": "ok", "selector": "body", "text": "Error happened", "error": None}]}})
 

@@ -29,6 +29,7 @@ def calibrate_judges(run_dir: str | Path, human_review_path: str | Path) -> dict
     by_tag = {key: _stats(items) for key, items in _group_multi(rows, "tags").items()}
     by_capability = {key: _stats(items) for key, items in _group_meta(rows, "capability").items()}
     by_risk_level = {key: _stats(items) for key, items in _group_meta(rows, "risk_level").items()}
+    by_failure_owner = {key: _stats(items) for key, items in _group(rows, "failure_owner").items()}
     disagreements = [row for row in rows if row["automated_passed"] != row["human_passed"]]
     disagreements.sort(key=lambda item: (-_risk_rank(item.get("risk_level")), -abs(item.get("score_gap", 0)), item["case_id"], item["evaluator"]))
     return {
@@ -39,6 +40,8 @@ def calibrate_judges(run_dir: str | Path, human_review_path: str | Path) -> dict
         "by_tag": by_tag,
         "by_capability": by_capability,
         "by_risk_level": by_risk_level,
+        "by_failure_owner": by_failure_owner,
+        "confusion_matrix": _confusion_matrix(rows),
         "top_disagreements": disagreements[:20],
         "recommendations": _recommendations(overall, by_evaluator, disagreements),
     }
@@ -56,6 +59,9 @@ def _row(item: dict[str, Any], label: dict[str, Any], result: dict[str, Any]) ->
         "human_passed": bool(label.get("human_passed")),
         "human_score": human_score,
         "human_failure_type": label.get("human_failure_type"),
+        "failure_owner": label.get("failure_owner") or "unclear",
+        "valid_alternative_solution": bool(label.get("valid_alternative_solution")),
+        "recommended_action": label.get("recommended_action"),
         "human_reason": label.get("human_reason"),
         "automated_passed": bool(result.get("passed")),
         "automated_score": auto_score,
@@ -116,6 +122,15 @@ def _group_meta(rows: list[dict[str, Any]], key: str) -> dict[str, list[dict[str
         if value:
             grouped[str(value)].append(row)
     return grouped
+
+
+def _confusion_matrix(rows: list[dict[str, Any]]) -> dict[str, int]:
+    return {
+        "true_pass": sum(1 for row in rows if row["automated_passed"] and row["human_passed"]),
+        "true_fail": sum(1 for row in rows if not row["automated_passed"] and not row["human_passed"]),
+        "false_pass": sum(1 for row in rows if row["automated_passed"] and not row["human_passed"]),
+        "false_fail": sum(1 for row in rows if not row["automated_passed"] and row["human_passed"]),
+    }
 
 
 def _risk_rank(value: Any) -> int:

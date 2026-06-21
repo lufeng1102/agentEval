@@ -8,11 +8,19 @@ from typing import Any
 from evolution.artifacts import load_run_artifacts
 from review.models import ReviewItem
 
-SUPPORTED_STRATEGIES = {"failures", "low-score", "high-risk", "safety", "judge", "environment", "random"}
+SUPPORTED_STRATEGIES = {"failures", "low-score", "high-risk", "safety", "judge", "environment", "random", "active"}
 PRIORITY_RANK = {"low": 1, "medium": 2, "high": 3, "critical": 4}
 
 
-def sample_review_items(run_dir: str | Path, strategies: list[str] | None = None, limit: int | None = None, low_score_threshold: float = 0.7, include_traces: bool = True) -> dict[str, Any]:
+def sample_review_items(
+    run_dir: str | Path,
+    strategies: list[str] | None = None,
+    limit: int | None = None,
+    low_score_threshold: float = 0.7,
+    include_traces: bool = True,
+    active_threshold: float = 0.7,
+    active_margin: float = 0.15,
+) -> dict[str, Any]:
     selected_strategies = strategies or ["failures", "low-score", "high-risk"]
     unknown = sorted(set(selected_strategies) - SUPPORTED_STRATEGIES)
     if unknown:
@@ -33,10 +41,16 @@ def sample_review_items(run_dir: str | Path, strategies: list[str] | None = None
         case = cases.get(case_id, {})
         trace = traces.get((case_id, repeat_index), {}) if include_traces else {}
         results = results_by_key.get((case_id, repeat_index), [])
-        matched = _matched_strategies(case, trace, results, selected_strategies, low_score_threshold)
+        active_score, active_reasons = _active_signal(case, trace, results, active_threshold, active_margin)
+        matched = _matched_strategies(case, trace, results, selected_strategies, low_score_threshold, active_score)
         if not matched:
             continue
         priority = _priority(case, trace, results, matched)
+        metadata = dict(case.get("metadata") or {})
+        if "active" in matched:
+            review_metadata = dict(metadata.get("review") or {})
+            review_metadata.update({"active_score": active_score, "active_reasons": active_reasons})
+            metadata["review"] = review_metadata
         items.append(
             ReviewItem(
                 review_id=_review_id(run_dir, case_id, repeat_index),
@@ -49,7 +63,7 @@ def sample_review_items(run_dir: str | Path, strategies: list[str] | None = None
                 expected=case.get("expected") or {},
                 rubric=case.get("rubric"),
                 tags=[str(tag) for tag in case.get("tags", []) or []],
-                metadata=case.get("metadata") or {},
+                metadata=metadata,
                 agent_output=str(trace.get("final_output", "")),
                 messages=_truncate_list(trace.get("messages", []) or [], 20),
                 tool_calls=_truncate_list(trace.get("tool_calls", []) or [], 50),
@@ -63,12 +77,12 @@ def sample_review_items(run_dir: str | Path, strategies: list[str] | None = None
         items = items[: max(0, limit)]
     return {
         "run_dir": str(run_dir),
-        "summary": {"items": len(items), "strategies": selected_strategies, "limit": limit},
+        "summary": {"items": len(items), "strategies": selected_strategies, "limit": limit, "active_threshold": active_threshold, "active_margin": active_margin},
         "items": [item.model_dump(mode="json") for item in items],
     }
 
 
-def _matched_strategies(case: dict[str, Any], trace: dict[str, Any], results: list[dict[str, Any]], strategies: list[str], low_score_threshold: float) -> list[str]:
+def _matched_strategies(case: dict[str, Any], trace: dict[str, Any], results: list[dict[str, Any]], strategies: list[str], low_score_threshold: float, active_score: float = 0) -> list[str]:
     matched = []
     for strategy in strategies:
         if strategy == "failures" and any(not result.get("passed") for result in results):
@@ -85,6 +99,8 @@ def _matched_strategies(case: dict[str, Any], trace: dict[str, Any], results: li
             matched.append(strategy)
         elif strategy == "random":
             matched.append(strategy)
+        elif strategy == "active" and active_score > 0:
+            matched.append(strategy)
     return matched
 
 
@@ -96,9 +112,39 @@ def _priority(case: dict[str, Any], trace: dict[str, Any], results: list[dict[st
         return "critical"
     if risk == "high" or "environment" in matched or any(not result.get("passed") for result in results):
         return "high"
-    if "low-score" in matched or "judge" in matched:
+    if "low-score" in matched or "judge" in matched or "active" in matched:
         return "medium"
     return "low"
+
+
+def _active_signal(case: dict[str, Any], trace: dict[str, Any], results: list[dict[str, Any]], threshold: float, margin: float) -> tuple[float, list[str]]:
+    reasons: list[str] = []
+    score = 0.0
+    risk = str((case.get("metadata") or {}).get("risk_level", "")).lower()
+    if risk in {"high", "critical"}:
+        score += 3 if risk == "critical" else 2
+        reasons.append(f"{risk} risk")
+    scores = [float(result.get("score", 0) or 0) for result in results]
+    if any(abs(item - threshold) <= margin for item in scores):
+        score += 1.5
+        reasons.append("near active threshold")
+    passed_values = {bool(result.get("passed")) for result in results if "passed" in result}
+    if len(passed_values) > 1:
+        score += 2
+        reasons.append("mixed evaluator pass/fail")
+    if any(result.get("judgements") or "judge" in str(result.get("evaluator", "")).lower() for result in results):
+        score += 1
+        reasons.append("judge evaluator involved")
+    if _has_safety_signal(case, results):
+        score += 2
+        reasons.append("safety signal")
+    if _has_environment_signal(trace, results):
+        score += 2
+        reasons.append("environment signal")
+    if trace.get("errors") or any(result.get("failure_type") == "error" for result in results):
+        score += 2
+        reasons.append("run or trace error")
+    return score, reasons
 
 
 def _has_safety_signal(case: dict[str, Any], results: list[dict[str, Any]]) -> bool:

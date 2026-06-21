@@ -19,7 +19,7 @@ def write_run(run_dir: Path) -> Path:
         ],
     }
     traces = [
-        {"case_id": "c_fail", "repeat_index": 0, "messages": [{"role": "user", "content": "q1"}], "final_output": "bad", "tool_calls": [], "artifacts": {"environment": {"summary": {"command_failures": 1}, "commands": [{"phase": "test", "command": "pytest", "exit_code": 1}]}}},
+        {"case_id": "c_fail", "repeat_index": 0, "messages": [{"role": "user", "content": "q1"}, {"role": "assistant", "content": "bad"}], "final_output": "bad", "tool_calls": [{"name": "lookup", "input": {"id": "A100"}, "output": {"status": "blocked"}, "error": None}], "artifacts": {"dynamic": {"stop_reason": "max_turns", "turns": [{"index": 0, "assistant": "bad", "tool_calls": []}], "simulator_turns": [{"type": "llm", "reply": "continue"}], "state_history": [{"turn": 0, "state": {"order": "blocked"}}], "final_state": {"order": "blocked"}}, "environment": {"summary": {"command_failures": 1}, "commands": [{"phase": "test", "command": "pytest", "exit_code": 1}]}}},
         {"case_id": "c_pass", "repeat_index": 0, "messages": [{"role": "user", "content": "q2"}], "final_output": "ok", "tool_calls": [], "artifacts": {}},
     ]
     (run_dir / "report.json").write_text(json.dumps(report), encoding="utf-8")
