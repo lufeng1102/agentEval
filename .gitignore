@@ -21,6 +21,9 @@ dist/
 # Local evaluation outputs
 runs/
 
+# Claude local workspace
+.claude/
+
 # OS/editor
 .DS_Store
 .idea/

@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
+from adapters.contract import adapter_metadata
 from config import AgentConfig
 from schemas import AgentRun, ChatMessage, EvalCase, RunContext
 
@@ -38,6 +39,15 @@ class ClaudeCodeAgentAdapter:
             latency_ms=(time.perf_counter() - started) * 1000,
             errors=errors,
             raw_response={"command": command, "stdout": completed.stdout, "stderr": completed.stderr, "returncode": completed.returncode},
+            artifacts={
+                "adapter": adapter_metadata(
+                    "claude_code",
+                    framework="claude_code_cli",
+                    capabilities={"messages": True},
+                    lossiness=["Claude Code CLI does not expose structured tool calls, spans, or token usage in --print mode."],
+                ),
+                "claude_code": {"command": command, "cwd": cwd, "returncode": completed.returncode},
+            },
         )
 
     def _command(self, prompt: str) -> list[str]:

@@ -12,6 +12,8 @@ from agents.static_adapter import StaticAgentAdapter
 from config import AppConfig, load_config, load_dataset
 from compare import compare_runs, write_compare_html, write_compare_json, write_compare_markdown
 from evaluators import build_evaluator
+from exports import export_run
+from hosted import HostedIngestionService, IngestionConflict, LocalHostedStorage
 from evolution.artifacts import load_run_artifacts
 from environments.analysis import analyze_environment_independence, clean_environment_workspaces, write_environment_analysis_json, write_environment_analysis_markdown, write_environment_cleanup_json, write_environment_cleanup_markdown
 from evolution.decisions import make_decision, write_decision_json, write_decision_markdown
@@ -286,6 +288,53 @@ def judge_calibration(
     report = calibrate_judges(run, human_review)
     paths = _write_report_outputs(out, report, formats or ["markdown"], write_calibration_markdown, write_calibration_json)
     typer.echo(f"Judge calibration agreement={report['summary']['agreement_rate']:.2%}, labeled={report['summary']['labeled_cases']}. Reports: {', '.join(str(path) for path in paths)}")
+
+
+@app.command("upload")
+def upload_command(
+    run_dir: Path = typer.Option(..., "--run", help="Run directory containing AgentEval artifacts."),
+    storage: Path = typer.Option(Path("runs/hosted"), "--storage", help="Local hosted storage directory."),
+    project_id: str = typer.Option("default", "--project-id", help="Hosted project id."),
+    run_key: str | None = typer.Option(None, "--run-key", help="Stable run key for idempotent uploads."),
+    idempotency_key: str | None = typer.Option(None, "--idempotency-key", help="Optional idempotency key."),
+    overwrite: bool = typer.Option(False, "--overwrite/--no-overwrite", help="Replace an existing run with the same run key."),
+    dashboard_base_url: str | None = typer.Option(None, "--dashboard-base-url", help="Optional dashboard base URL for the response."),
+) -> None:
+    """Upload/index a local AgentEval run into hosted-mode artifact storage."""
+    service = HostedIngestionService(LocalHostedStorage(storage), dashboard_base_url=dashboard_base_url)
+    try:
+        result = service.ingest_run_directory(run_dir, project_id=project_id, run_key=run_key, idempotency_key=idempotency_key, overwrite=overwrite)
+    except IngestionConflict as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(
+        f"Uploaded run_id={result.run_id} status={result.status} already_exists={result.already_exists} "
+        f"artifacts={len(result.artifacts)} storage={storage}"
+    )
+    if result.dashboard_url:
+        typer.echo(f"Dashboard: {result.dashboard_url}")
+
+
+@app.command("export")
+def export_command(
+    target: str = typer.Argument(..., help="Export target: langfuse, phoenix, or braintrust."),
+    run_dir: Path = typer.Option(..., "--run", help="Run directory containing AgentEval artifacts."),
+    out: Path = typer.Option(..., "--out", "-o", help="Output JSONL path."),
+    validate: bool = typer.Option(False, "--validate/--no-validate", help="Validate exported records."),
+) -> None:
+    """Export an AgentEval run to an external platform compatible JSONL format."""
+    try:
+        issues = export_run(target, run_dir, out, validate=validate)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    error_count = sum(1 for issue in issues if issue.severity == "error")
+    warning_count = sum(1 for issue in issues if issue.severity == "warning")
+    typer.echo(f"Exported {target} compatible output to {out}. validation_errors={error_count}, validation_warnings={warning_count}")
+    if error_count:
+        for issue in issues:
+            if issue.severity == "error":
+                typer.echo(f"Export validation error: {issue.path}: {issue.message}", err=True)
+        raise typer.Exit(code=1)
 
 
 @app.command("trace-import")
@@ -620,6 +669,11 @@ def rsi_decision(
     anti_gaming_report: Path | None = typer.Option(None, "--anti-gaming-report"),
     holdout_report: Path | None = typer.Option(None, "--holdout-report"),
     self_mod_report: Path | None = typer.Option(None, "--self-mod-report"),
+    memory_report: Path | None = typer.Option(None, "--memory-report"),
+    action_risk_report: Path | None = typer.Option(None, "--action-risk-report"),
+    frontier_report: Path | None = typer.Option(None, "--frontier-report"),
+    evolution_loop_report: Path | None = typer.Option(None, "--evolution-loop-report"),
+    redteam_report: Path | None = typer.Option(None, "--redteam-report"),
     out: Path = typer.Option(Path("runs/rsi-decision.md"), "--out", "-o"),
     formats: list[str] | None = typer.Option(None, "--format"),
     fail_on_review: bool = typer.Option(False, "--fail-on-review/--no-fail-on-review", help="Exit nonzero when decision requires human review."),
@@ -634,6 +688,11 @@ def rsi_decision(
         anti_gaming_report=anti_gaming_report,
         holdout_report=holdout_report,
         self_mod_report=self_mod_report,
+        memory_report=memory_report,
+        action_risk_report=action_risk_report,
+        frontier_report=frontier_report,
+        evolution_loop_report=evolution_loop_report,
+        redteam_report=redteam_report,
     )
     paths = _write_rsi_outputs(out, report, formats or ["markdown"], write_rsi_decision_markdown, write_rsi_decision_json)
     typer.echo(f"RSI decision {report['status']}: risk_score={report['risk_score']}. Reports: {', '.join(str(path) for path in paths)}")
@@ -1696,6 +1755,10 @@ def _build_agent(config: AppConfig):
         from agents.claude_code_adapter import ClaudeCodeAgentAdapter
 
         return ClaudeCodeAgentAdapter(config.agent)
+    if config.agent.provider == "langchain":
+        from agents.langchain_adapter import LangChainAgentAdapter
+
+        return LangChainAgentAdapter(config.agent)
     if config.agent.provider in {"import", "plugin"}:
         return _build_imported_agent(config)
     raise typer.BadParameter(f"unknown agent provider: {config.agent.provider}")

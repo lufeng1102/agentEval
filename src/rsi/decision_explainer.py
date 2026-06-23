@@ -5,7 +5,7 @@ from typing import Any
 
 from evolution.decisions import STATUS_ACCEPTED, STATUS_CANARY, STATUS_REJECTED, STATUS_REVIEW, make_decision
 from promotion import PromotionPolicy
-from rsi.models import load_artifact, risk_level, write_json, write_markdown
+from rsi.models import combine_status, gate_result, load_artifact, risk_level, write_json, write_markdown
 
 REPORT_SPECS = {
     "integrity": {"failure_field": "passed", "risk_field": "risk_level", "critical_status": STATUS_REJECTED, "high_status": STATUS_REVIEW},
@@ -13,8 +13,12 @@ REPORT_SPECS = {
     "anti_gaming": {"failure_field": None, "risk_field": "reward_hacking_risk", "critical_status": STATUS_REJECTED, "high_status": STATUS_REVIEW},
     "holdout": {"failure_field": "passed", "risk_field": "risk_level", "critical_status": STATUS_REVIEW, "high_status": STATUS_REVIEW},
     "self_modification": {"failure_field": "passed", "risk_field": None, "critical_status": STATUS_REVIEW, "high_status": STATUS_REVIEW},
+    "memory": {"failure_field": None, "risk_field": "risk_level", "critical_status": STATUS_REJECTED, "high_status": STATUS_REVIEW},
+    "action_risk": {"failure_field": None, "risk_field": "risk_level", "critical_status": STATUS_REJECTED, "high_status": STATUS_REVIEW},
+    "frontier": {"failure_field": None, "risk_field": "risk_level", "critical_status": STATUS_REVIEW, "high_status": STATUS_REVIEW},
+    "evolution_loop": {"failure_field": None, "risk_field": "risk_level", "critical_status": STATUS_REVIEW, "high_status": STATUS_REVIEW},
+    "redteam": {"failure_field": None, "risk_field": "risk_level", "critical_status": STATUS_REJECTED, "high_status": STATUS_REVIEW},
 }
-STATUS_RANK = {STATUS_ACCEPTED: 0, STATUS_CANARY: 1, STATUS_REVIEW: 2, STATUS_REJECTED: 3, "rollback_recommended": 4}
 RISK_SCORE = {"low": 10, "medium": 35, "high": 65, "critical": 85}
 
 
@@ -27,6 +31,11 @@ def explain_rsi_decision(
     anti_gaming_report: str | Path | None = None,
     holdout_report: str | Path | None = None,
     self_mod_report: str | Path | None = None,
+    memory_report: str | Path | None = None,
+    action_risk_report: str | Path | None = None,
+    frontier_report: str | Path | None = None,
+    evolution_loop_report: str | Path | None = None,
+    redteam_report: str | Path | None = None,
 ) -> dict[str, Any]:
     base_decision = make_decision(baseline, candidate, policy)
     component_paths = {
@@ -35,6 +44,11 @@ def explain_rsi_decision(
         "anti_gaming": anti_gaming_report,
         "holdout": holdout_report,
         "self_modification": self_mod_report,
+        "memory": memory_report,
+        "action_risk": action_risk_report,
+        "frontier": frontier_report,
+        "evolution_loop": evolution_loop_report,
+        "redteam": redteam_report,
     }
     component_reports = {name: load_artifact(path) for name, path in component_paths.items() if path is not None}
     reasons = list(base_decision.get("reasons", []))
@@ -42,6 +56,9 @@ def explain_rsi_decision(
     status = str(base_decision.get("status", STATUS_ACCEPTED))
     score = int(base_decision.get("risk_score", 0) or 0)
     evidence: list[dict[str, Any]] = []
+    gates: list[dict[str, Any]] = []
+    blocking_reports: list[str] = []
+    review_reports: list[str] = []
 
     for name, report in component_reports.items():
         spec = REPORT_SPECS[name]
@@ -53,16 +70,22 @@ def explain_rsi_decision(
         if failed or requires_review or report_risk in {"medium", "high", "critical"}:
             reason = _component_reason(name, report, report_risk, failed)
             reasons.append(reason)
-            evidence.append({"component": name, "risk_level": report_risk, "failed": failed, "summary": reason["message"]})
+            evidence.append({"component": name, "risk_level": report_risk, "failed": failed, "summary": reason["message"], "source": str(component_paths.get(name))})
             required_actions.extend(_component_actions(name, report))
         if failed and name == "integrity":
-            status = _max_status(status, spec["critical_status"] if report_risk in {"high", "critical"} else STATUS_REVIEW)
+            status = combine_status(status, spec["critical_status"] if report_risk in {"high", "critical"} else STATUS_REVIEW)
         elif report_risk == "critical":
-            status = _max_status(status, spec["critical_status"])
+            status = combine_status(status, spec["critical_status"])
         elif report_risk == "high" or failed or requires_review:
-            status = _max_status(status, spec["high_status"])
+            status = combine_status(status, spec["high_status"])
         elif report_risk == "medium":
-            status = _max_status(status, STATUS_CANARY)
+            status = combine_status(status, STATUS_CANARY)
+        gate_status = "blocked" if report_risk == "critical" or (failed and name == "integrity") else "review" if failed or requires_review or report_risk == "high" else "canary" if report_risk == "medium" else "passed"
+        gates.append(gate_result(name, gate_status, _component_reason(name, report, report_risk, failed)["message"], risk=report_risk, source=str(component_paths.get(name))))
+        if gate_status == "blocked":
+            blocking_reports.append(name)
+        elif gate_status == "review":
+            review_reports.append(name)
 
     final_level = risk_level(score)
     return {
@@ -74,6 +97,11 @@ def explain_rsi_decision(
         "summary": f"RSI governance decision is {status} with {final_level} risk.",
         "top_reasons": reasons[:8],
         "evidence": evidence,
+        "gates": gates,
+        "blocking_reports": blocking_reports,
+        "review_reports": review_reports,
+        "canary_required": status == STATUS_CANARY or any(gate.get("status") == "canary" for gate in gates),
+        "minimum_next_step": "block promotion" if blocking_reports or status == STATUS_REJECTED else "human review" if review_reports or status == STATUS_REVIEW else "canary" if status == STATUS_CANARY else "standard monitoring",
         "required_actions": list(dict.fromkeys(required_actions)) or ["Proceed with standard monitoring."],
         "release_recommendation": {
             "full_release": status == STATUS_ACCEPTED,
@@ -131,7 +159,3 @@ def _component_actions(name: str, report: dict[str, Any]) -> list[str]:
     if name == "self_modification" and not report.get("passed", True):
         return ["Fix self-modification review findings"]
     return []
-
-
-def _max_status(left: str, right: str) -> str:
-    return left if STATUS_RANK.get(left, 0) >= STATUS_RANK.get(right, 0) else right

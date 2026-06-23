@@ -8,7 +8,7 @@ AgentEval is a Python evaluation platform for self-evolving / RSI (recursive sel
 | --- | --- |
 | Evaluation harness | Run YAML datasets against configurable agent adapters, evaluators, repeats, retries, timeouts, and CI thresholds. |
 | Dataset and config protocols | Validate stable YAML contracts for cases, expected outputs, scenarios, agent providers, runner settings, evaluators, and report formats. |
-| Agent adapters | Evaluate deterministic `static` agents, Anthropic-backed agents, Claude Code custom agents, and imported/plugin agents behind one trace contract. |
+| Agent adapters | Evaluate deterministic `static` agents, Anthropic-backed agents, Claude Code custom agents, LangChain-compatible runnables, and imported/plugin agents behind one trace contract. |
 | Trace and artifact recording | Persist `manifest.json`, `traces.jsonl`, `results.jsonl`, reports, environment artifacts, and run metadata for auditability. |
 | Rule-based evaluators | Score exact matches, required facts, regex/schema constraints, safety policy, trajectory/tool usage, tool outputs, state, minefields, cost, environments, and tests. |
 | LLM judge evaluators | Use Claude-powered rubric/trajectory judges and foundational judge metrics such as answer relevancy, faithfulness, context quality, hallucination, task completion, and conversation quality. |
@@ -25,7 +25,7 @@ AgentEval is a Python evaluation platform for self-evolving / RSI (recursive sel
 | Judge calibration | Compare automated/LLM judge results against human labels with agreement, precision, recall, F1, score error, breakdowns, and recommendations. |
 | Judge cache | Keep judge outputs reproducible and reviewable through `.agenteval/judge-cache` artifacts when enabled. |
 | Production monitoring ingest | Normalize production events into AgentEval artifacts and summarize health signals, errors, outcomes, tags, capabilities, risks, agents, models, latency, and tools. |
-| Trace import and replay | Normalize AgentEval, production, OpenTelemetry/OpenInference, Langfuse, and Phoenix-style traces; replay observed traces through evaluators without calling an agent; and convert failed traces into regression datasets. |
+| Trace import and replay | Normalize AgentEval, production, OpenTelemetry/OpenInference, Langfuse, and Phoenix-style traces; replay observed traces through evaluators without calling an agent; convert failed traces into regression datasets; and export run artifacts to Langfuse/Phoenix/Braintrust-compatible JSONL. |
 | User feedback loop | Join user feedback to production events by `event_id` or `session_id`, quantify negative feedback, and identify unmatched feedback. |
 | Feedback-to-regression conversion | Convert negative or user-reported production failures into reviewable regression dataset cases without fabricating strong expected answers. |
 | Production coverage | Compare production traffic segments against eval datasets or run reports to find uncovered and underrepresented real-world scenarios. |
@@ -40,7 +40,13 @@ AgentEval is a Python evaluation platform for self-evolving / RSI (recursive sel
   - `static` adapter for deterministic local smoke tests.
   - `anthropic` adapter using the official Anthropic Python SDK with mock tool-loop and scripted multi-turn support.
   - `claude_code` adapter for evaluating Claude Code custom agents through the Claude Code CLI.
+  - `langchain` adapter for LangChain-compatible runnables loaded from `agent.settings.import_path`.
   - `import` / `plugin` adapters for external agent implementations.
+- P3 ecosystem foundations:
+  - adapter contract/conformance helpers for ecosystem adapters.
+  - Python SDK instrumentation for local AgentTrace JSONL capture.
+  - Langfuse/Phoenix/Braintrust-compatible export JSONL.
+  - local dashboard data layer, alerts rules/webhook skeleton, and hosted-mode artifact ingestion skeleton.
 - Full trace recording to JSONL for auditability and offline analysis.
 - Rule-based evaluators:
   - `exact_match`
@@ -307,7 +313,7 @@ Top-level config fields:
 
 | Field | Purpose |
 | --- | --- |
-| `provider` | Adapter name. Built-ins: `static`, `anthropic`. |
+| `provider` | Adapter name. Built-ins: `static`, `anthropic`, `claude_code`, `langchain`, `import`, and `plugin`. |
 | `model` | Model name for model-backed adapters. Defaults to `claude-opus-4-8`. |
 | `system` | System prompt for model-backed adapters. |
 | `max_tokens` | Maximum output tokens for model-backed adapters. |
@@ -320,6 +326,7 @@ Top-level config fields:
 | `static_tool_calls` | Static adapter tool-call trace. |
 | `static_latency_ms` | Static adapter latency value for reports. |
 | `static_artifacts` | Static adapter artifacts, such as mock final state. |
+| `settings` | Provider-specific settings, such as `import_path`, LangChain `input_key`/`output_key`, or Claude Code CLI options. |
 
 `runner` fields:
 
@@ -722,6 +729,31 @@ Use existing evaluators with dynamic runs:
 - `tool_output` checks mock or dynamic tool outputs.
 - `state` checks `artifacts.final_state` written by the dynamic runtime.
 - `contains`, `regex`, `safety`, and judge evaluators still operate on the final assistant output/trace.
+
+## LangChain-compatible adapter config
+
+Use the `langchain` provider to evaluate a LangChain-compatible runnable, chain, agent executor, or factory loaded from Python import path. The adapter intentionally does not make LangChain a hard dependency; the imported object can expose `ainvoke(payload)`, `invoke(payload)`, or be a plain callable.
+
+```yaml
+agent:
+  provider: langchain
+  settings:
+    import_path: my_package.langchain_app.build_runnable
+    input_key: input
+    output_key: output
+
+runner:
+  concurrency: 1
+  timeout_seconds: 120
+
+evaluators:
+  - type: contains
+
+report:
+  formats: [json, markdown]
+```
+
+`input_key` defaults to `input`; `output_key` defaults to `output`. The adapter maps common response keys (`output`, `result`, `answer`, `content`) into `AgentRun.final_output`, converts `intermediate_steps` or `tool_calls` into `ToolCall` records, preserves returned `spans` as `TraceSpan` records, and adds `artifacts.adapter` metadata for adapter conformance. Framework-specific callback internals are only captured when your runnable returns them in the response.
 
 ## Claude Code adapter config
 
@@ -1795,6 +1827,26 @@ PYTHONPATH=src python -m cli production-coverage \
 
 Coverage compares tags, capability, risk level, channel, intent, and locale where available, and highlights uncovered or underrepresented production segments.
 
+### SDK instrumentation JSONL capture
+
+AgentEval includes a lightweight Python instrumentation SDK for recording application or production agent runs as normalized `AgentTrace` JSONL without invoking the eval runner directly.
+
+```python
+from instrumentation import trace_agent_run, span, tool_call, record_usage
+
+@trace_agent_run(trace_path="runs/prod-traces.jsonl", case_id="prod_case_001", agent_id="support-agent")
+async def run_agent(user_input: str) -> str:
+    record_usage(input_tokens=100, output_tokens=50)
+    async with span("llm.generate", kind="llm", input={"prompt": user_input}) as sp:
+        output = await call_model(user_input)
+        sp.set_output({"text": output})
+    async with tool_call("search", input={"query": user_input}) as call:
+        call.set_output({"hits": 3})
+    return output
+```
+
+The SDK supports sync/async decorators, context managers, nested spans, tool calls, usage accumulation, error capture, local append-only JSONL writing, and default redaction for common sensitive keys such as `token`, `password`, `authorization`, and `api_key`. Instrumentation flush failures default to fail-open so they do not break the business agent path.
+
 ### Trace import, replay, and trace-derived regressions
 
 AgentEval can also ingest observed traces directly and replay them through evaluators without calling the agent again. This is useful when production behavior has already been captured by AgentEval, OpenTelemetry/OpenInference, Langfuse, Phoenix-style exports, or normalized production events.
@@ -1837,6 +1889,38 @@ PYTHONPATH=src python -m cli trace-to-regressions \
 ```
 
 Trace-derived regressions preserve trace provenance and avoid inventing strong expected answers. They add a rubric and `production_trace`/`spans` expectations so humans or judge evaluators can refine them into durable regression tests.
+
+Export an AgentEval run to external observability/eval platform compatible JSONL:
+
+```bash
+PYTHONPATH=src python -m cli export langfuse \
+  --run runs/latest \
+  --out runs/latest/export/langfuse.jsonl \
+  --validate
+
+PYTHONPATH=src python -m cli export phoenix \
+  --run runs/latest \
+  --out runs/latest/export/phoenix.jsonl \
+  --validate
+
+PYTHONPATH=src python -m cli export braintrust \
+  --run runs/latest \
+  --out runs/latest/export/braintrust.jsonl \
+  --validate
+```
+
+The export command reads existing `manifest.json`, `traces.jsonl`, `results.jsonl`, and `report.json` artifacts. It does not rerun the agent or evaluators. The current exporters produce compatible JSONL skeletons for file-based interchange; direct API push connectors are not implemented yet.
+
+Use local hosted-mode artifact ingestion to index a run directory into local storage for future hosted/dashboard workflows:
+
+```bash
+PYTHONPATH=src python -m cli upload \
+  --run runs/latest \
+  --storage runs/hosted \
+  --project-id default
+```
+
+Repeated uploads with the same run key and artifact hashes are idempotent. Uploading the same run key with different artifacts fails unless `--overwrite` is used.
 
 Use the `span` evaluator for trace/span contracts:
 

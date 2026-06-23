@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from adapters.conformance import validate_agent_run_contract
 from agents.claude_code_adapter import ClaudeCodeAgentAdapter
 from config import AgentConfig
 from schemas import ChatMessage, EvalCase, RunContext
@@ -34,6 +35,10 @@ def test_claude_code_adapter_invokes_configured_agent(tmp_path: Path) -> None:
     assert kwargs["cwd"] == str(tmp_path)
     assert run.case_id == "c1"
     assert run.final_output == "agent output"
+    assert run.artifacts["adapter"]["contract_version"] == "agenteval.adapter.v1"
+    assert run.artifacts["adapter"]["adapter_name"] == "claude_code"
+    assert run.artifacts["claude_code"]["returncode"] == 0
+    assert [item for item in validate_agent_run_contract(run) if item.severity == "error"] == []
 
 
 def test_claude_code_adapter_records_command_failure(tmp_path: Path) -> None:

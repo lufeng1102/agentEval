@@ -24,7 +24,7 @@ def analyze_evolution_loop(spec_path: str | Path) -> dict[str, Any]:
     for step in steps:
         input_run = step.get("input_run")
         candidate_run = step.get("candidate_run")
-        step_metric: dict[str, Any] = {"iteration": step.get("iteration"), "decision": step.get("decision")}
+        step_metric: dict[str, Any] = {"iteration": step.get("iteration"), "decision": step.get("decision"), "interventions": int(step.get("interventions", 0) or 0), "goal_drift": bool(step.get("goal_drift", False)), "stalled": bool(step.get("stalled", False))}
         if input_run and candidate_run:
             input_pass = pass_rate(input_run)
             candidate_pass = pass_rate(candidate_run)
@@ -76,6 +76,9 @@ def analyze_evolution_loop(spec_path: str | Path) -> dict[str, Any]:
         "tokens_per_fixed_regression": token_total / len(set(fixed)) if fixed else None,
         "accepted_rate": accepted / len(steps) if steps else 0,
         "regression_introduction_rate": len(introduced) / len(steps) if steps else 0,
+        "interventions": sum(int(step.get("interventions", 0) or 0) for step in step_metrics),
+        "stalled_iterations": sum(1 for step in step_metrics if step.get("stalled")),
+        "goal_drift_iterations": sum(1 for step in step_metrics if step.get("goal_drift")),
         "monotonicity": {
             "pass_rate_non_decreasing": _non_decreasing(pass_rates),
             "avg_score_non_decreasing": _non_decreasing(avg_scores),
@@ -116,4 +119,8 @@ def _drift_flags(step_metrics: list[dict[str, Any]], pass_rates: list[float], to
         flags.append("token_usage_increased_more_than_50_percent")
     if any(step.get("decision") == "accepted" and step.get("introduced_regressions") for step in step_metrics):
         flags.append("accepted_step_introduced_regressions")
+    if any(step.get("stalled") for step in step_metrics):
+        flags.append("loop_stalled")
+    if any(step.get("goal_drift") for step in step_metrics):
+        flags.append("goal_drift_detected")
     return flags
