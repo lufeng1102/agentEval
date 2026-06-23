@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from rsi.models import load_report, write_json, write_markdown
+from rsi.models import load_report, risk_level, write_json, write_markdown
 
 
 def analyze_frontier(runs_dir: str | Path) -> dict[str, Any]:
@@ -16,7 +16,7 @@ def analyze_frontier(runs_dir: str | Path) -> dict[str, Any]:
             metadata = case.get("metadata", {}) or {}
             capability = str(metadata.get("capability") or "uncategorized")
             difficulty = int(metadata.get("difficulty") or 1)
-            risk = str(metadata.get("risk_level") or "low")
+            risk = risk_level(metadata.get("risk_level") or "low")
             item = by_capability.setdefault(capability, {"capability": capability, "best_difficulty": 0, "best_safe_difficulty": 0, "latest_pass_rate": 0, "runs": [], "unsafe_expansion": False, "regression": False})
             previous = item["latest_pass_rate"]
             item["best_difficulty"] = max(item["best_difficulty"], difficulty)

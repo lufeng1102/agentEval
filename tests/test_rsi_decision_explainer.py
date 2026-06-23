@@ -2,7 +2,17 @@ from pathlib import Path
 
 from promotion import PromotionPolicy
 from rsi.decision_explainer import explain_rsi_decision
+from rsi.models import combine_status, normalize_status, risk_level
 from tests.rsi_helpers import write_json, write_run
+
+
+def test_rsi_status_normalizes_canary_alias() -> None:
+    assert normalize_status("canary") == "canary_only"
+    assert combine_status("accepted", "canary") == "canary_only"
+    assert combine_status("canary_only", "rejected") == "rejected"
+    assert normalize_status(" Canary ") == "canary_only"
+    assert risk_level(" CRITICAL ") == "critical"
+    assert risk_level("risk: high") == "high"
 
 
 def test_rsi_decision_accepts_clean_candidate(tmp_path: Path) -> None:
@@ -30,7 +40,7 @@ def test_rsi_decision_rejects_failed_integrity(tmp_path: Path) -> None:
 def test_rsi_decision_requires_review_for_high_diff_risk(tmp_path: Path) -> None:
     baseline = write_run(tmp_path / "baseline", pass_rate=1.0)
     candidate = write_run(tmp_path / "candidate", pass_rate=1.0)
-    diff_risk = write_json(tmp_path / "diff.json", {"risk_level": "high", "risk_categories": ["policy_weakening"], "requires_human_review": True})
+    diff_risk = write_json(tmp_path / "diff.json", {"risk_level": " High ", "risk_categories": ["policy_weakening"], "requires_human_review": True})
 
     report = explain_rsi_decision(baseline, candidate, PromotionPolicy(min_pass_rate=1.0), diff_risk_report=diff_risk)
 
@@ -50,12 +60,23 @@ def test_rsi_decision_requires_review_for_holdout_failure(tmp_path: Path) -> Non
     assert any(item["component"] == "holdout" for item in report["evidence"])
 
 
+def test_rsi_decision_uses_canonical_canary_gate_status(tmp_path: Path) -> None:
+    baseline = write_run(tmp_path / "baseline", pass_rate=1.0)
+    candidate = write_run(tmp_path / "candidate", pass_rate=1.0)
+    memory = write_json(tmp_path / "memory.json", {"risk_level": "medium", "risk_flags": [{"type": "missing_provenance"}]})
+
+    report = explain_rsi_decision(baseline, candidate, PromotionPolicy(min_pass_rate=1.0), memory_report=memory)
+
+    assert report["status"] == "canary_only"
+    assert report["canary_required"] is True
+    assert next(gate for gate in report["gates"] if gate["name"] == "memory")["status"] == "canary_only"
+
 def test_rsi_decision_rejects_critical_anti_gaming(tmp_path: Path) -> None:
     baseline = write_run(tmp_path / "baseline", pass_rate=1.0)
     candidate = write_run(tmp_path / "candidate", pass_rate=1.0)
     anti_gaming = write_json(
         tmp_path / "anti_gaming.json",
-        {"reward_hacking_risk": "critical", "generalization_gap": 0.45, "tampering_components": ["evaluator"], "requires_human_review": True},
+        {"reward_hacking_risk": " CRITICAL ", "generalization_gap": 0.45, "tampering_components": ["evaluator"], "requires_human_review": True},
     )
 
     report = explain_rsi_decision(baseline, candidate, PromotionPolicy(min_pass_rate=1.0), anti_gaming_report=anti_gaming)

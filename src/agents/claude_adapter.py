@@ -6,6 +6,7 @@ from typing import Any
 
 import anthropic
 
+from adapters.contract import adapter_metadata
 from agents.anthropic_utils import case_messages, case_tools, extract_text, extract_usage, merge_usage
 from config import AgentConfig
 from schemas import AgentRun, ChatMessage, EvalCase, RunContext, ToolCall, Usage
@@ -50,15 +51,16 @@ class ClaudeAgentAdapter:
                 tool_calls.extend(turn_calls)
                 usage = merge_usage(usage, turn_usage)
                 raw_responses.extend(turn_raw)
-        except anthropic.APIError as exc:
+        except (anthropic.APIError, RuntimeError) as exc:
             return AgentRun(
                 case_id=case.id,
                 messages=trace_messages,
                 latency_ms=(time.perf_counter() - started) * 1000,
                 errors=[f"{exc.__class__.__name__}: {exc}"],
+                artifacts={"adapter": _anthropic_metadata(tool_calls)},
             )
 
-        artifacts: dict[str, Any] = {}
+        artifacts: dict[str, Any] = {"adapter": _anthropic_metadata(tool_calls)}
         if runtime.state:
             artifacts["final_state"] = runtime.state
 
@@ -101,6 +103,16 @@ class ClaudeAgentAdapter:
             response = await self.client.messages.create(**self._build_request(api_messages, tools))
             usage = merge_usage(usage, extract_usage(response))
             raw_responses.append(_to_dict(response))
+            if getattr(response, "stop_reason", None) == "refusal":
+                details = getattr(response, "stop_details", None)
+                category = getattr(details, "category", None) if details is not None else None
+                explanation = getattr(details, "explanation", None) if details is not None else None
+                message = "Anthropic response stopped with refusal"
+                if category:
+                    message += f" ({category})"
+                if explanation:
+                    message += f": {explanation}"
+                raise RuntimeError(message)
             text = extract_text(response.content)
             tool_use_blocks = _extract_tool_use_blocks(response.content)
             if not tool_use_blocks:
@@ -155,9 +167,9 @@ class ClaudeAgentAdapter:
         if self.config.cache_control and not self.config.cache_system_prompt:
             request["cache_control"] = self.config.cache_control
 
-        # Opus 4.8/4.7 reject temperature/top_p/top_k. Only pass temperature
+        # Fable 5 and Opus 4.8/4.7 reject temperature/top_p/top_k. Only pass temperature
         # when explicitly configured for models that support it.
-        if self.config.temperature is not None and not self.config.model.startswith("claude-opus-4-"):
+        if self.config.temperature is not None and _model_allows_sampling(self.config.model):
             request["temperature"] = self.config.temperature
 
         if self.config.thinking:
@@ -165,7 +177,47 @@ class ClaudeAgentAdapter:
         if self.config.output_config:
             request["output_config"] = self.config.output_config
 
-        return request
+        return _sanitize_request_for_model(request)
+
+
+def _model_allows_sampling(model: str) -> bool:
+    normalized = str(model or "")
+    if normalized in {"claude-fable-5", "claude-mythos-5"}:
+        return False
+    if normalized.startswith("claude-opus-4-7") or normalized.startswith("claude-opus-4-8"):
+        return False
+    return True
+
+
+def _sanitize_request_for_model(request: dict[str, Any]) -> dict[str, Any]:
+    model = str(request.get("model") or "")
+    if not _model_allows_sampling(model):
+        for key in ("temperature", "top_p", "top_k"):
+            request.pop(key, None)
+    thinking = request.get("thinking")
+    if isinstance(thinking, dict):
+        thinking_type = thinking.get("type")
+        if model in {"claude-fable-5", "claude-mythos-5"}:
+            if thinking_type == "adaptive":
+                cleaned = {key: value for key, value in thinking.items() if key != "budget_tokens"}
+                request["thinking"] = cleaned
+            else:
+                request.pop("thinking", None)
+        elif model.startswith("claude-opus-4-7") or model.startswith("claude-opus-4-8"):
+            if thinking_type == "enabled" or "budget_tokens" in thinking:
+                cleaned = {key: value for key, value in thinking.items() if key != "budget_tokens"}
+                cleaned["type"] = "adaptive"
+                request["thinking"] = cleaned
+    return request
+
+def _anthropic_metadata(tool_calls: list[ToolCall]) -> dict[str, Any]:
+    return adapter_metadata(
+        "anthropic",
+        framework="anthropic",
+        framework_version=str(getattr(anthropic, "__version__", "unknown")),
+        capabilities={"messages": True, "tool_calls": bool(tool_calls), "usage": True},
+        lossiness=["Anthropic adapter records SDK responses and normalized tool calls but does not emit provider spans."],
+    )
 
 
 def _scripted_turns(case: EvalCase) -> list[str]:

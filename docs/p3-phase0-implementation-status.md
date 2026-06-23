@@ -10,6 +10,7 @@ Phase 0 skeleton is implemented for the main P3 foundation blocks.
 |---|---|---|
 | Adapter contract | Implemented | `src/adapters/contract.py`, `src/adapters/conformance.py` |
 | Claude Code contract metadata | Implemented | `src/agents/claude_code_adapter.py` |
+| LangChain adapter MVP | Implemented | `src/agents/langchain_adapter.py`, `tests/test_langchain_adapter.py` |
 | SDK instrumentation | Implemented skeleton | `src/instrumentation/` |
 | External export | Implemented skeleton | `src/exports/` |
 | Dashboard local data layer | Implemented skeleton | `src/dashboard/data.py` |
@@ -54,6 +55,7 @@ PYTHONPATH=src python -m cli upload \
 |---|---|
 | Adapter contract | `tests/adapters/test_contract_conformance.py` |
 | Claude Code adapter | `tests/test_claude_code_adapter.py` |
+| LangChain adapter | `tests/test_langchain_adapter.py` |
 | SDK instrumentation | `tests/instrumentation/test_sdk_tracer.py` |
 | Export | `tests/exports/test_exporters.py` |
 | Dashboard data layer | `tests/dashboard/test_dashboard_data.py` |
@@ -63,7 +65,7 @@ PYTHONPATH=src python -m cli upload \
 
 ## Current limitations
 
-- Framework-specific adapters for LangChain, AutoGen, CrewAI, and OpenAI Agents SDK are not implemented yet.
+- LangChain adapter MVP is implemented without a hard LangChain dependency; AutoGen, CrewAI, and OpenAI Agents SDK adapters are not implemented yet.
 - SDK instrumentation is local JSONL only; hosted upload is not wired into tracer yet.
 - Export formats are compatible skeletons, not official direct API push connectors.
 - Dashboard is a data layer skeleton, not a served interactive web UI.
@@ -72,7 +74,7 @@ PYTHONPATH=src python -m cli upload \
 
 ## Recommended next steps
 
-1. Add LangChain adapter MVP using adapter contract and conformance tests.
+1. Add AutoGen, CrewAI, and OpenAI Agents SDK adapter MVPs using the adapter contract and conformance tests.
 2. Add served local dashboard command on top of `LocalRunDataSource`.
 3. Add hosted API server wrapper around `HostedIngestionService`.
 4. Add webhook alert CLI/worker integration.

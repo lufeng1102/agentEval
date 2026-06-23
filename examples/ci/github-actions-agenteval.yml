@@ -1,4 +1,4 @@
-name: AgentEval Evolution Gate
+name: AgentEval Governance Gate
 
 on:
   pull_request:
@@ -9,44 +9,94 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+
       - name: Install AgentEval
         run: python -m pip install -e '.[dev]'
-      - name: Run tests
+
+      - name: Run unit tests
         run: python -m pytest
+
       - name: Run baseline evaluation
         run: |
           PYTHONPATH=src python -m cli run \
             --dataset examples/datasets/basic_agent_eval.yaml \
             --config examples/configs/static_eval.yaml \
             --out runs/ci-baseline
+
       - name: Run candidate evaluation
         run: |
           PYTHONPATH=src python -m cli run \
             --dataset examples/datasets/basic_agent_eval.yaml \
             --config examples/configs/static_eval.yaml \
             --out runs/ci-candidate
-      - name: Diagnose and decide
+
+      - name: Run RSI demo benchmark
+        run: |
+          PYTHONPATH=src python -m cli run \
+            --dataset examples/datasets/rsi_demo_benchmark.yaml \
+            --config examples/configs/rsi_demo_benchmark.yaml \
+            --out runs/rsi-demo \
+            --fail-on-error
+
+      - name: Compare baseline and candidate
+        run: |
+          PYTHONPATH=src python -m cli compare \
+            --baseline runs/ci-baseline \
+            --candidate runs/ci-candidate \
+            --out runs/ci-candidate/compare \
+            --format markdown \
+            --format json \
+            --max-pass-rate-drop 0.05 \
+            --max-avg-score-drop 0.05 \
+            --fail-on-new-failures
+
+      - name: Enforce promotion policy
+        run: |
+          PYTHONPATH=src python -m cli promote \
+            --baseline runs/ci-baseline \
+            --candidate runs/ci-candidate \
+            --policy examples/policies/ci_governance.yaml \
+            --out runs/ci-candidate/promotion \
+            --format markdown \
+            --format json
+
+      - name: Diagnose candidate and write PR summary
+        if: always()
         run: |
           PYTHONPATH=src python -m cli diagnose \
             --baseline runs/ci-baseline \
             --candidate runs/ci-candidate \
             --out runs/ci-candidate/diagnosis \
-            --format markdown --format json
+            --format markdown \
+            --format json
           PYTHONPATH=src python -m cli decide \
             --baseline runs/ci-baseline \
             --candidate runs/ci-candidate \
-            --policy examples/policies/promotion.yaml \
+            --policy examples/policies/ci_governance.yaml \
             --out runs/ci-candidate/decision \
-            --format markdown --format json
+            --format markdown \
+            --format json
           PYTHONPATH=src python -m cli pr-summary \
             --decision runs/ci-candidate/decision.json \
             --diagnosis runs/ci-candidate/diagnosis.json \
+            --compare runs/ci-candidate/compare.json \
             --out runs/ci-candidate/pr-comment.md
-      - uses: actions/upload-artifact@v4
+
+      - name: Generate failure-derived regression dataset
+        if: failure()
+        run: |
+          PYTHONPATH=src python -m cli regressions \
+            --run runs/ci-candidate \
+            --out runs/ci-candidate/generated-regressions.yaml \
+            --dedupe
+
+      - name: Upload AgentEval artifacts
+        uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: agenteval-reports
+          name: agenteval-governance-artifacts
           path: runs/

@@ -40,6 +40,7 @@ def analyze_anti_gaming(baseline: str | Path, candidate: str | Path, known: str 
     confidence = generalization_confidence(known_counts, holdout_counts, gap)
     return {
         "reward_hacking_risk": risk,
+        "risk_level": risk,
         "risk_score": min(risk_score, 100),
         "baseline": str(baseline),
         "candidate": str(candidate),

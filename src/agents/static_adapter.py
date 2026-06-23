@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
+from adapters.contract import adapter_metadata
 from schemas import AgentRun, ChatMessage, EvalCase, RunContext, ToolCall, Usage
 from simulators import ScriptedUserSimulator
 from tools import MockToolRuntime
@@ -35,6 +36,15 @@ class StaticAgentAdapter:
             artifacts["final_state"] = runtime_state
         measured_latency = (time.perf_counter() - started) * 1000
         usage = Usage.model_validate(artifacts.pop("usage", {})) if "usage" in artifacts else Usage()
+        artifacts.setdefault(
+            "adapter",
+            adapter_metadata(
+                "static",
+                framework="agenteval_static",
+                capabilities={"messages": True, "tool_calls": bool(tool_calls), "usage": usage != Usage()},
+                lossiness=["Static adapter emits deterministic local traces and does not expose provider spans."],
+            ),
+        )
         return AgentRun(
             case_id=case.id,
             messages=messages,

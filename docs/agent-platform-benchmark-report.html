@@ -1,0 +1,525 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Agent / LLM 应用测试评测平台对标调研报告</title>
+  <style>
+    :root {
+      --bg: #f6f8fb;
+      --panel: #ffffff;
+      --text: #172033;
+      --muted: #667085;
+      --border: #e4e7ec;
+      --brand: #4f46e5;
+      --brand-2: #06b6d4;
+      --good: #067647;
+      --warn: #b54708;
+      --bad: #b42318;
+      --code: #f2f4f7;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: linear-gradient(180deg, #eef2ff 0%, var(--bg) 280px);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+      line-height: 1.65;
+    }
+    a { color: var(--brand); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .wrap { max-width: 1180px; margin: 0 auto; padding: 32px 20px 80px; }
+    header.hero {
+      padding: 40px 0 24px;
+    }
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: #3730a3;
+      background: rgba(79, 70, 229, .10);
+      border: 1px solid rgba(79, 70, 229, .20);
+      padding: 6px 12px;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 700;
+    }
+    h1 {
+      font-size: clamp(32px, 5vw, 56px);
+      line-height: 1.08;
+      margin: 18px 0 14px;
+      letter-spacing: -0.04em;
+    }
+    .subtitle {
+      max-width: 920px;
+      color: #344054;
+      font-size: 18px;
+      margin: 0;
+    }
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 18px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,.72);
+      border-radius: 999px;
+      padding: 6px 10px;
+    }
+    .grid {
+      display: grid;
+      gap: 18px;
+    }
+    .grid.cards { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    @media (max-width: 900px) {
+      .grid.cards, .grid.two { grid-template-columns: 1fr; }
+    }
+    .card, section {
+      background: rgba(255,255,255,.92);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      box-shadow: 0 8px 24px rgba(16, 24, 40, .06);
+    }
+    .card { padding: 20px; }
+    .card h3 { margin: 0 0 8px; font-size: 18px; }
+    .card p { margin: 0; color: var(--muted); }
+    section { padding: 26px; margin-top: 22px; }
+    h2 {
+      margin: 0 0 14px;
+      font-size: 28px;
+      letter-spacing: -0.02em;
+    }
+    h3 { margin: 22px 0 10px; font-size: 21px; }
+    h4 { margin: 18px 0 8px; }
+    p { margin: 10px 0; }
+    ul, ol { padding-left: 24px; }
+    li { margin: 6px 0; }
+    .callout {
+      border-left: 5px solid var(--brand);
+      background: #eef2ff;
+      padding: 14px 16px;
+      border-radius: 12px;
+      margin: 16px 0;
+    }
+    .callout strong { color: #3730a3; }
+    .warning { border-left-color: var(--warn); background: #fff7ed; }
+    .success { border-left-color: var(--good); background: #ecfdf3; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 14px 0 22px;
+      overflow: hidden;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      font-size: 14px;
+    }
+    th, td {
+      padding: 12px 12px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+      text-align: left;
+    }
+    th {
+      background: #f9fafb;
+      color: #344054;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    tr:last-child td { border-bottom: none; }
+    tbody tr:nth-child(even) td { background: #fcfcfd; }
+    .table-scroll { overflow-x: auto; }
+    code {
+      background: var(--code);
+      border: 1px solid #e4e7ec;
+      border-radius: 6px;
+      padding: 1px 5px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-size: .92em;
+    }
+    pre {
+      background: #0b1020;
+      color: #e6edf3;
+      border-radius: 14px;
+      padding: 16px;
+      overflow-x: auto;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+    .score { font-weight: 700; }
+    .high { color: var(--good); }
+    .medium { color: var(--warn); }
+    .low { color: var(--bad); }
+    .toc {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+    @media (max-width: 700px) { .toc { grid-template-columns: 1fr; } }
+    .toc a {
+      display: block;
+      padding: 10px 12px;
+      background: #f9fafb;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      color: #344054;
+    }
+    .sources li { word-break: break-word; }
+    footer {
+      color: var(--muted);
+      font-size: 13px;
+      margin-top: 28px;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="hero">
+      <span class="eyebrow">Deep Research · AgentEval Benchmark</span>
+      <h1>Agent / LLM 应用测试评测平台对标调研报告</h1>
+      <p class="subtitle">对当前业界与开源界 Agent / LLM 应用测试评测平台进行调研，并与 AgentEval 的本地评测、CI gate、trace replay、regression mining、promotion governance 与 RSI 安全治理能力对标。</p>
+      <div class="meta">
+        <span class="chip">覆盖开源框架、Observability、托管平台</span>
+        <span class="chip">维度：dataset、trace、judge、RAG、CI、governance、hosted</span>
+        <span class="chip">输出：差距分析 + P0/P1/P2 路线</span>
+      </div>
+    </header>
+
+    <div class="grid cards">
+      <div class="card">
+        <h3>核心结论</h3>
+        <p>AgentEval 不应只做另一个 metric runner，而应定位为面向 agentic / self-improving AI 的本地优先评测与发布治理平台。</p>
+      </div>
+      <div class="card">
+        <h3>最大差异化</h3>
+        <p>RSI/self-improvement governance：self-modification、eval integrity、anti-gaming、holdout、frontier、memory/action risk。</p>
+      </div>
+      <div class="card">
+        <h3>最大差距</h3>
+        <p>Hosted dashboard、团队协作、trace UI、OpenInference/OTLP 互操作、广泛生态 instrumentation 和 production feedback loop。</p>
+      </div>
+    </div>
+
+    <section id="toc">
+      <h2>目录</h2>
+      <div class="toc">
+        <a href="#summary">1. Executive Summary</a>
+        <a href="#landscape">2. 竞品与生态分层</a>
+        <a href="#matrix">3. 功能维度矩阵</a>
+        <a href="#findings">4. 关键发现</a>
+        <a href="#gap">5. AgentEval 差距分析</a>
+        <a href="#positioning">6. 推荐产品定位</a>
+        <a href="#roadmap">7. P0/P1/P2 路线建议</a>
+        <a href="#priority">8. 竞品跟踪优先级</a>
+        <a href="#conclusion">9. 结论</a>
+        <a href="#sources">10. Sources</a>
+      </div>
+    </section>
+
+    <section id="summary">
+      <h2>1. Executive Summary</h2>
+      <p>当前业界 Agent / LLM 应用测试评测生态大致形成三类主流能力中心：</p>
+      <ol>
+        <li><strong>本地/CI 评测框架</strong>：DeepEval、promptfoo、Inspect AI、Ragas、OpenAI Evals。</li>
+        <li><strong>Trace / Observability / Instrumentation 平台</strong>：OpenInference、Phoenix/Arize、LangSmith、Langfuse、Braintrust。</li>
+        <li><strong>托管协作 / 生产监控 / 反馈闭环平台</strong>：LangSmith、Phoenix/Arize、Braintrust、Langfuse Cloud、Confident AI、Humanloop、W&amp;B Weave 等。</li>
+      </ol>
+      <div class="callout success">
+        <strong>AgentEval 的相对优势：</strong>将 YAML dataset/config、agent adapters、traces、evaluators、reports、CI thresholds、failure mining/regression、promotion gates、production trace replay 与 RSI governance 放在一个 Python 本地优先、CI 友好、artifact-first 的工作流中。
+      </div>
+      <p>尤其是 <strong>RSI / self-improvement governance</strong> 是主流平台中相对少见的差异化方向。多数平台覆盖通用 LLM eval、RAG eval、red teaming、observability，但很少把 self-modification、eval integrity、anti-gaming、holdout、capability frontier、memory pollution、action risk、evolution loop 等治理维度作为一等公民。</p>
+      <p>主要差距集中在 hosted dashboard / team collaboration、production feedback loop、广泛生态 adapter / instrumentation、OpenTelemetry / OpenInference 深度兼容、trace UI / trajectory viewer、dataset UI / annotation workflow、商业托管能力与官方 benchmark / 示例生态。</p>
+    </section>
+
+    <section id="landscape">
+      <h2>2. 竞品与生态分层</h2>
+      <h3>2.1 本地/CI 评测框架</h3>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>平台</th><th>定位</th><th>关键能力</th><th>对 AgentEval 的启发</th></tr></thead>
+          <tbody>
+            <tr><td>DeepEval</td><td>LLM app evaluation framework</td><td>LLMTestCase、ConversationalTestCase、GEval、LLM-as-judge、0-1 score、threshold、本地运行、可选 Confident AI 云</td><td>指标生态和 test case 体验成熟；AgentEval 应强化 artifact + gate + regression 差异化。</td></tr>
+            <tr><td>promptfoo</td><td>开源 CLI / library / CI eval 与 red teaming</td><td>YAML config、test cases、assertions、多 provider、CI/CD、GitHub Action、red-team</td><td>声明式测试和 CI 接入值得对标。</td></tr>
+            <tr><td>Inspect AI</td><td>Agent/tool/multi-agent eval framework</td><td>Task(dataset/solver/scorer)、tools、sandbox、MCP、multi-agent、外部 CLI agent、Inspect View</td><td>AgentEval 在 agent execution harness、sandbox、viewer 上有差距。</td></tr>
+            <tr><td>Ragas</td><td>RAG / LLM app metrics</td><td>RAG metrics、custom metrics、systematic eval loop</td><td>不要重复造通用 RAG metric，应强调可审计 replay/governance。</td></tr>
+            <tr><td>OpenAI Evals</td><td>benchmark / eval registry / custom eval</td><td>YAML/model-graded eval、custom eval、completion function protocol、prompt chain、tool-using agent wrapper</td><td>可学习 benchmark registry 和 completion protocol。</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>2.2 Trace / Observability / Instrumentation 平台</h3>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>平台</th><th>定位</th><th>关键能力</th><th>对 AgentEval 的启发</th></tr></thead>
+          <tbody>
+            <tr><td>OpenInference</td><td>AI observability semantic conventions</td><td>OpenTelemetry-compatible instrumentation、LLM/vector retrieval/tool/API span kind</td><td>AgentEval trace 互操作应优先对齐 OpenInference。</td></tr>
+            <tr><td>Phoenix / Arize</td><td>LLM observability + eval</td><td>OTLP trace ingest、OpenTelemetry tracing、LlamaIndex/LangChain/OpenAI integrations、LLM eval</td><td>Hosted trace ingestion 和 dashboard 可对标 Phoenix。</td></tr>
+            <tr><td>LangSmith</td><td>LangChain-native tracing/eval/observability</td><td>LangChain first-party tracing、hosted dashboard、dataset/eval、feedback</td><td>LangChain adapter 应继续向 LangSmith tracing 语义靠拢。</td></tr>
+            <tr><td>Langfuse</td><td>Open-source LLM observability</td><td>tracing、sessions、datasets/evals、prompt mgmt、hosted/self-hosted</td><td>export/import 可优先保证 Langfuse-compatible。</td></tr>
+            <tr><td>Braintrust</td><td>Eval + tracing + prompt/experiment mgmt</td><td>experiments、datasets、scores、traces、hosted workflow</td><td>export 与 hosted roadmap 可参考。</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>2.3 托管协作 / 商业平台</h3>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>平台</th><th>强项</th><th>AgentEval 当前差距</th></tr></thead>
+          <tbody>
+            <tr><td>LangSmith</td><td>LangChain 生态、hosted trace、dataset/eval UI、feedback</td><td>缺 hosted collaboration 和 trace UI。</td></tr>
+            <tr><td>Braintrust</td><td>Experiment/dataset/scores/traces 一体化</td><td>缺 dataset UI、experiment lineage。</td></tr>
+            <tr><td>Langfuse Cloud</td><td>LLM observability、prompt mgmt、datasets、self-hosted/cloud</td><td>目前仅 export skeleton。</td></tr>
+            <tr><td>Arize/Phoenix/AX</td><td>Observability + online monitoring + eval</td><td>缺 online monitoring dashboard。</td></tr>
+            <tr><td>Humanloop</td><td>Prompt/eval/annotation workflow</td><td>缺团队 review/annotation 产品化。</td></tr>
+            <tr><td>W&amp;B Weave</td><td>LLM tracing/evals 与 ML experiment tracking 生态</td><td>缺可视化 experiment tracking。</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="matrix">
+      <h2>3. 功能维度矩阵</h2>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>功能维度</th><th>AgentEval 当前</th><th>DeepEval</th><th>promptfoo</th><th>Inspect AI</th><th>Ragas</th><th>OpenAI Evals</th><th>Phoenix/OpenInference</th><th>LangSmith</th><th>Langfuse/Braintrust</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>Dataset / eval case 管理</td><td>YAML，本地版本化</td><td>强</td><td>强</td><td>强</td><td>中</td><td>强</td><td>中</td><td>强</td><td>强</td></tr>
+            <tr><td>Config-driven eval</td><td>强</td><td>中</td><td>强</td><td>强</td><td>中</td><td>强</td><td>中</td><td>中</td><td>中</td></tr>
+            <tr><td>Agent adapter</td><td>static / Anthropic / Claude Code / LangChain / import</td><td>中</td><td>多 provider</td><td>强</td><td>弱</td><td>completion fn</td><td>trace-oriented</td><td>LangChain 强</td><td>trace-oriented</td></tr>
+            <tr><td>Trace capture</td><td>有，P3 SDK skeleton</td><td>中</td><td>中</td><td>强</td><td>弱</td><td>中</td><td>强</td><td>强</td><td>强</td></tr>
+            <tr><td>Tool trajectory eval</td><td>有 trajectory/tool_output/span</td><td>中</td><td>中</td><td>强</td><td>弱</td><td>中</td><td>强</td><td>强</td><td>强</td></tr>
+            <tr><td>Multi-agent eval</td><td>部分，待增强</td><td>Conversational</td><td>弱</td><td>强</td><td>弱</td><td>中</td><td>trace 可表达</td><td>中</td><td>中</td></tr>
+            <tr><td>LLM-as-judge</td><td>有 rubric/trajectory/foundational metrics</td><td>强</td><td>model-graded</td><td>scorer 可扩展</td><td>有</td><td>model-graded</td><td>有</td><td>有</td><td>有</td></tr>
+            <tr><td>RAG metrics</td><td>已有核心指标</td><td>有</td><td>可配置</td><td>可扩展</td><td>强</td><td>中</td><td>强</td><td>有</td><td>有</td></tr>
+            <tr><td>CI gating</td><td>强</td><td>有</td><td>强</td><td>有</td><td>需自建</td><td>有</td><td>弱</td><td>中</td><td>中</td></tr>
+            <tr><td>Failure mining / regression</td><td>强</td><td>中</td><td>弱/中</td><td>中</td><td>弱</td><td>benchmark registry</td><td>弱</td><td>中</td><td>中</td></tr>
+            <tr><td>Promotion gate</td><td>强</td><td>弱</td><td>中</td><td>弱</td><td>弱</td><td>弱</td><td>弱</td><td>中</td><td>中</td></tr>
+            <tr><td>Production trace replay</td><td>有</td><td>弱</td><td>弱</td><td>中</td><td>弱</td><td>弱</td><td>强</td><td>强</td><td>强</td></tr>
+            <tr><td>Hosted dashboard</td><td>skeleton/data layer</td><td>Confident AI</td><td>Cloud/Viewer</td><td>Inspect View local</td><td>弱</td><td>无/弱</td><td>强</td><td>强</td><td>强</td></tr>
+            <tr><td>Team workspace</td><td>skeleton roadmap</td><td>云端有</td><td>企业/云</td><td>弱</td><td>弱</td><td>弱</td><td>强</td><td>强</td><td>强</td></tr>
+            <tr><td>Alerts</td><td>skeleton</td><td>云端可能有</td><td>CI-oriented</td><td>弱</td><td>弱</td><td>弱</td><td>强</td><td>强</td><td>强</td></tr>
+            <tr><td>External import/export</td><td>trace import + export skeleton</td><td>弱</td><td>config/providers</td><td>logs</td><td>弱</td><td>registry/protocol</td><td>OpenTelemetry/OTLP</td><td>LangSmith API</td><td>强</td></tr>
+            <tr><td>Security / red team</td><td>RSI + redteam</td><td>中</td><td>强</td><td>强</td><td>弱</td><td>中</td><td>observability</td><td>中</td><td>中</td></tr>
+            <tr><td>RSI / self-improvement governance</td><td><span class="score high">强差异化</span></td><td>无</td><td>无</td><td>部分安全</td><td>无</td><td>无</td><td>无</td><td>无</td><td>无</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="callout">
+        <strong>矩阵结论：</strong>AgentEval 在本地 artifact-first、CI gate、promotion、regression mining、RSI governance 上领先或差异化明显；在 hosted collaboration、trace UI、生态 adapter/instrumentation、production monitoring 上落后于头部平台。
+      </div>
+    </section>
+
+    <section id="findings">
+      <h2>4. 关键发现</h2>
+      <h3>4.1 本地/CI eval 框架已经成熟，AgentEval 不能只做 metric runner</h3>
+      <p>DeepEval、promptfoo、OpenAI Evals 已经覆盖 test case / dataset、metric / assertion、model-graded eval、CI/CD、threshold pass/fail、多 provider 或自定义 completion function。</p>
+      <p>AgentEval 应继续强化从 eval runner 到 release governance engine 的路径：baseline/candidate compare、failure mining、regression generation、promotion gates、production trace replay 与 RSI governance。</p>
+
+      <h3>4.2 Inspect AI 是 agent/tool/multi-agent 维度最直接的开源对标</h3>
+      <p>Inspect AI 的强项包括 Task(dataset/solver/scorer)、tools、sandbox、MCP、multi-agent primitives、外部 CLI agent bridge 与 Inspect View local UI。</p>
+      <p>AgentEval 当前具备 trajectory evaluator、tool_output evaluator、span evaluator、environment evaluators、Claude Code adapter、LangChain adapter MVP 与 trace replay，但在 tool sandbox 一体化、MCP tools、外部 CLI agent bridge、trajectory viewer、built-in benchmark library 上仍有差距。</p>
+
+      <h3>4.3 OpenTelemetry / OpenInference 是 trace 互操作主线</h3>
+      <p>OpenInference/Phoenix 的优势在于基于 OpenTelemetry、支持 OTLP traces、具备 LLM/retrieval/tool/API semantic conventions 与生态 integration。</p>
+      <p>AgentEval 已有 trace import/replay、production trace normalization、Langfuse/Phoenix-style import、P3 export skeleton、SDK instrumentation skeleton。下一步关键是对齐 OpenInference span attributes、支持 OTLP import/export，并增强 Phoenix/Langfuse/Braintrust conformance tests。</p>
+
+      <h3>4.4 RAG/LLM-as-judge 不宜成为唯一卖点</h3>
+      <p>DeepEval、Ragas、Phoenix eval、LangSmith eval、promptfoo model-graded assertions 都已经覆盖大量 RAG / judge metrics。</p>
+      <p>AgentEval 应强调 expected schema 明确、judge config 可版本化、judge output 可缓存/审计、trace replay 可复现、promotion gate 可执行、failures 可转 regression、RSI/security context 可治理。</p>
+
+      <h3>4.5 Hosted/协作/生产 feedback 是最大产品差距</h3>
+      <p>成熟商业平台常见能力包括 hosted dashboard、workspace/project、dataset UI、experiment lineage、prompt/version management、annotation/review queue、online eval、feedback loop、alerting、RBAC、trace search、retention/compliance。</p>
+      <p>AgentEval 当前本地 CLI 和 artifact 很强，但 hosted/dashboard/alerts/workspace 仍主要是 skeleton 或 roadmap。</p>
+
+      <h3>4.6 RSI/self-improvement governance 是最强差异化机会</h3>
+      <p>AgentEval 的 RSI governance 覆盖 self-modification review、safety envelope、eval integrity、anti-gaming、holdout analysis、capability frontier、attribution、evolution loop metrics、memory pollution、action risk 与 RSI redteam。</p>
+      <div class="callout success">
+        <strong>推荐包装：</strong>AgentEval is an evaluation and release governance platform for agentic and self-improving AI systems.
+      </div>
+    </section>
+
+    <section id="gap">
+      <h2>5. AgentEval 差距分析</h2>
+      <div class="grid two">
+        <div>
+          <h3>5.1 当前优势</h3>
+          <table>
+            <thead><tr><th>领域</th><th>优势</th></tr></thead>
+            <tbody>
+              <tr><td>本地可复现</td><td>YAML dataset/config + artifacts</td></tr>
+              <tr><td>CI gating</td><td>pass rate / score / fail-on-error / promotion</td></tr>
+              <tr><td>Regression loop</td><td>failure mining、regression generation、append/dedupe</td></tr>
+              <tr><td>Production replay</td><td>trace import/replay/trace-derived regression</td></tr>
+              <tr><td>Governance</td><td>promotion policy + RSI analyzers</td></tr>
+              <tr><td>Claude/Claude Code 适配</td><td>Anthropic adapter、Claude Code adapter</td></tr>
+              <tr><td>Artifact-first</td><td>manifest/traces/results/report 全保留</td></tr>
+              <tr><td>P3 基础</td><td>LangChain adapter、instrumentation、export、dashboard data、alerts、hosted ingestion skeleton</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div>
+          <h3>5.2 明显短板</h3>
+          <table>
+            <thead><tr><th>短板</th><th>对标对象</th><th>影响</th></tr></thead>
+            <tbody>
+              <tr><td>Agent/tool/multi-agent execution harness 不够成熟</td><td>Inspect AI</td><td>复杂 agent 任务评测能力弱</td></tr>
+              <tr><td>Trace UI / trajectory viewer 缺失</td><td>Inspect View、Phoenix、LangSmith</td><td>调试体验弱</td></tr>
+              <tr><td>Hosted dashboard / workspace 缺失</td><td>LangSmith、Braintrust、Langfuse</td><td>团队协作弱</td></tr>
+              <tr><td>OpenTelemetry/OpenInference 对齐不足</td><td>Phoenix/OpenInference</td><td>生产 observability 互操作不足</td></tr>
+              <tr><td>Provider/framework 生态少</td><td>promptfoo、LangSmith</td><td>接入面窄</td></tr>
+              <tr><td>Dataset UI / annotation 缺失</td><td>Braintrust、LangSmith、Humanloop</td><td>人工评审闭环弱</td></tr>
+              <tr><td>Online eval / feedback loop 产品化不足</td><td>Phoenix/Arize、LangSmith</td><td>生产闭环弱</td></tr>
+              <tr><td>Benchmark/demo 不足</td><td>Inspect AI、OpenAI Evals</td><td>传播和可信度弱</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="positioning">
+      <h2>6. 推荐产品定位</h2>
+      <div class="callout success">
+        <strong>推荐定位：</strong>AgentEval = 本地优先的 agent evaluation + release governance 平台，面向 Claude/LLM/RSI/self-improving agents。
+      </div>
+      <p>关键词：</p>
+      <ul>
+        <li>local-first</li>
+        <li>CI-native</li>
+        <li>artifact-first</li>
+        <li>trace replay</li>
+        <li>regression mining</li>
+        <li>promotion governance</li>
+        <li>RSI safety</li>
+        <li>ecosystem adapters</li>
+        <li>hosted optional</li>
+      </ul>
+      <div class="callout warning">
+        <strong>不建议定位：</strong>不要只定位为 RAG metric framework、LLM-as-judge wrapper、observability dashboard、prompt testing CLI 或 generic LangChain tracing tool。这些方向已有强势平台，且 AgentEval 当前优势不在这里。
+      </div>
+    </section>
+
+    <section id="roadmap">
+      <h2>7. 路线建议</h2>
+      <h3>P0：夯实本地 CI + 治理闭环</h3>
+      <ol>
+        <li>修复 RSI 风险字段归一化问题：memory/evolution_loop risk fields、redteam minefield schema、canary rank。</li>
+        <li>强化 adapter contract：conformance suite；static/anthropic/claude_code/langchain 全部跑 conformance；adapter metadata 标准化。</li>
+        <li>强化 CI examples：GitHub Actions、baseline/candidate compare、promotion policy gate、failure-to-regression 自动生成。</li>
+        <li>强化 docs：AgentEval vs DeepEval/promptfoo/Inspect/Ragas、RSI governance quickstart、production trace replay quickstart、LangChain adapter quickstart。</li>
+        <li>建立 RSI demo benchmark：eval tampering、holdout leakage、memory poisoning、action risk、self-modification regression。</li>
+      </ol>
+
+      <h3>P1：生态互操作与 agent trajectory</h3>
+      <ol>
+        <li>OpenInference / OTLP 对齐：import/export conformance tests、span kind/attributes mapping、OTLP ingest/export MVP。</li>
+        <li>LangChain adapter 增强：callback handler、LangGraph、retriever spans、memory metadata、tool error mapping。</li>
+        <li>Inspect AI 对标能力：MCP tool adapter、sandboxed tool execution、external CLI agent adapters、multi-agent transcript、trajectory viewer data model。</li>
+        <li>Export/import 增强：Langfuse、Phoenix、Braintrust、LangSmith-compatible traces。</li>
+        <li>Dashboard MVP：run list、case detail、trace viewer、evaluator result table、compare view、RSI governance view。</li>
+      </ol>
+
+      <h3>P2：Hosted / Collaboration / Production feedback</h3>
+      <ol>
+        <li>Hosted API：run ingestion、artifact storage、project/workspace、API tokens。</li>
+        <li>Team workspace：users、roles、RBAC、shared datasets/configs/policies、audit logs。</li>
+        <li>Production feedback loop：trace search、feedback ingestion、negative feedback mining、review queue、feedback-to-regression。</li>
+        <li>Alerts：webhook、Slack/email、governance alerts、regression alerts、latency/cost alerts。</li>
+        <li>Annotation / review UX：human labels、disagreement analysis、judge calibration、review coverage。</li>
+        <li>Enterprise readiness：retention、self-host、VPC/on-prem、SSO、compliance。</li>
+      </ol>
+    </section>
+
+    <section id="priority">
+      <h2>8. 推荐竞品对标优先级</h2>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>优先级</th><th>项目</th><th>为什么</th></tr></thead>
+          <tbody>
+            <tr><td>P0</td><td>Inspect AI</td><td>Agent/tool/multi-agent eval 最直接开源对标。</td></tr>
+            <tr><td>P0</td><td>promptfoo</td><td>YAML/CI/red-team 使用体验成熟。</td></tr>
+            <tr><td>P0</td><td>DeepEval</td><td>LLM-as-judge/RAG metric 心智强。</td></tr>
+            <tr><td>P1</td><td>OpenInference/Phoenix</td><td>Trace 互操作事实标准。</td></tr>
+            <tr><td>P1</td><td>LangSmith</td><td>LangChain 生态与 hosted observability 标杆。</td></tr>
+            <tr><td>P1</td><td>Braintrust</td><td>Eval/dataset/experiment 产品化强。</td></tr>
+            <tr><td>P1</td><td>Langfuse</td><td>开源/自托管 observability 与 tracing。</td></tr>
+            <tr><td>P2</td><td>Humanloop</td><td>Prompt/eval/annotation workflow。</td></tr>
+            <tr><td>P2</td><td>W&amp;B Weave</td><td>Experiment tracking + LLM trace 生态。</td></tr>
+            <tr><td>P2</td><td>Giskard/Evidently/MLflow eval</td><td>更宽泛 ML/LLM quality monitoring 生态。</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="conclusion">
+      <h2>9. 结论</h2>
+      <p>AgentEval 当前不应该走“再做一个 LLM eval metric framework”的路线。</p>
+      <div class="callout success">
+        <strong>更有机会的路线：</strong>AgentEval = 面向 agentic / self-improving AI 的本地优先评测与发布治理平台。
+      </div>
+      <p>短期应强化本地 CI gate、regression mining、promotion policy、RSI governance、trace replay、LangChain/Claude Code adapter、OpenInference/Phoenix/Langfuse/Braintrust 互操作。</p>
+      <p>中长期再补 hosted dashboard、team workspace、production feedback、annotation/review、alerts、enterprise/self-hosted deployment。</p>
+      <p>这样 AgentEval 才能避开 DeepEval/Ragas/promptfoo 在通用指标/声明式测试上的红海，也避开 LangSmith/Phoenix/Langfuse 在纯 observability 上的强势区间，形成围绕 <strong>self-improving agents release governance</strong> 的差异化护城河。</p>
+    </section>
+
+    <section id="sources">
+      <h2>10. Sources</h2>
+      <ul class="sources">
+        <li><a href="https://deepeval.com/docs/getting-started">DeepEval Getting Started</a></li>
+        <li><a href="https://deepeval.com/docs/evaluation-test-cases">DeepEval Evaluation Test Cases</a></li>
+        <li><a href="https://deepeval.com/docs/metrics-introduction">DeepEval Metrics Introduction</a></li>
+        <li><a href="https://deepeval.com/docs/metrics-llm-evals">DeepEval LLM-as-Judge Metrics</a></li>
+        <li><a href="https://www.promptfoo.dev/docs/intro/">promptfoo Introduction</a></li>
+        <li><a href="https://www.promptfoo.dev/docs/configuration/guide/">promptfoo Configuration Guide</a></li>
+        <li><a href="https://www.promptfoo.dev/docs/configuration/expected-outputs/">promptfoo Expected Outputs</a></li>
+        <li><a href="https://www.promptfoo.dev/docs/integrations/github-action/">promptfoo GitHub Action</a></li>
+        <li><a href="https://www.promptfoo.dev/docs/providers/">promptfoo Providers</a></li>
+        <li><a href="https://www.promptfoo.dev/docs/red-team/">promptfoo Red Team</a></li>
+        <li><a href="https://github.com/openai/evals">OpenAI Evals GitHub</a></li>
+        <li><a href="https://github.com/openai/evals/blob/main/docs/completion-fn-protocol.md">OpenAI Evals Completion Function Protocol</a></li>
+        <li><a href="https://inspect.aisi.org.uk/">Inspect AI</a></li>
+        <li><a href="https://inspect.aisi.org.uk/tools.html">Inspect AI Tools</a></li>
+        <li><a href="https://inspect.aisi.org.uk/agent-bridge.html">Inspect AI Agent Bridge</a></li>
+        <li><a href="https://inspect.aisi.org.uk/multi-agent.html">Inspect AI Multi-agent</a></li>
+        <li><a href="https://inspect.aisi.org.uk/log-viewer.html">Inspect AI Log Viewer</a></li>
+        <li><a href="https://github.com/UKGovernmentBEIS/inspect_ai">Inspect AI GitHub</a></li>
+        <li><a href="https://docs.ragas.io/en/stable/">Ragas Docs</a></li>
+        <li><a href="https://github.com/explodinggradients/ragas">Ragas GitHub</a></li>
+        <li><a href="https://github.com/Arize-ai/openinference">OpenInference GitHub</a></li>
+        <li><a href="https://arize.com/docs/phoenix/tracing/llm-traces">Phoenix LLM Traces</a></li>
+        <li><a href="https://arize.com/docs/phoenix/integrations">Phoenix Integrations</a></li>
+        <li><a href="https://arize.com/docs/phoenix/tracing/integrations-tracing">Phoenix Tracing Integrations</a></li>
+        <li><a href="https://opentelemetry.io/docs/what-is-opentelemetry/">OpenTelemetry Overview</a></li>
+        <li><a href="https://opentelemetry.io/docs/specs/semconv/gen-ai/">OpenTelemetry GenAI Semantic Conventions</a></li>
+        <li><a href="https://docs.langchain.com/langsmith/trace-with-langchain">LangSmith Trace with LangChain</a></li>
+        <li><a href="https://docs.langchain.com/langsmith/observability-quickstart">LangSmith Observability Quickstart</a></li>
+        <li><a href="https://docs.langchain.com/langsmith">LangSmith Docs</a></li>
+        <li><a href="https://docs.langchain.com/oss/python/langchain/overview">LangChain Python Overview</a></li>
+        <li><a href="https://docs.langchain.com/oss/javascript/langchain/overview">LangChain JS Overview</a></li>
+        <li><a href="https://langfuse.com/docs/tracing">Langfuse Tracing</a></li>
+        <li><a href="https://langfuse.com/docs">Langfuse Docs</a></li>
+        <li><a href="https://www.braintrust.dev/docs/guides/traces">Braintrust Traces</a></li>
+        <li><a href="https://www.braintrust.dev/docs/">Braintrust Docs</a></li>
+        <li><a href="https://www.trulens.org/getting_started/core_concepts/rag_triad/">TruLens RAG Triad</a></li>
+        <li><a href="https://arize.com/docs/phoenix/evaluation/llm-evals">Phoenix LLM Evals</a></li>
+        <li><a href="https://www.anthropic.com/news/anthropics-responsible-scaling-policy">Anthropic Responsible Scaling Policy</a></li>
+        <li><a href="https://www.apolloresearch.ai/research/scheming-reasoning-evaluations">Apollo Research Scheming Reasoning Evaluations</a></li>
+      </ul>
+    </section>
+
+    <footer>
+      Generated for AgentEval · deep-research benchmark report
+    </footer>
+  </div>
+</body>
+</html>

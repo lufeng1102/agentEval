@@ -17,13 +17,13 @@ class ContractIssue(BaseModel):
     message: str
 
 
-def validate_agent_run_contract(run: AgentRun) -> list[ContractIssue]:
+def validate_agent_run_contract(run: AgentRun, *, require_adapter_metadata: bool = False) -> list[ContractIssue]:
     issues: list[ContractIssue] = []
     _validate_case(run, issues)
     _validate_tool_calls(run, issues)
     _validate_spans(run, issues)
     _validate_json_serializable("raw_response", run.raw_response, issues)
-    _validate_adapter_metadata(run, issues)
+    _validate_adapter_metadata(run, issues, require_adapter_metadata=require_adapter_metadata)
     return issues
 
 
@@ -60,19 +60,33 @@ def _validate_spans(run: AgentRun, issues: list[ContractIssue]) -> None:
         _validate_json_serializable(f"spans[{index}].events", span.events, issues)
 
 
-def _validate_adapter_metadata(run: AgentRun, issues: list[ContractIssue]) -> None:
+def _validate_adapter_metadata(run: AgentRun, issues: list[ContractIssue], *, require_adapter_metadata: bool = False) -> None:
     adapter = run.artifacts.get("adapter") if isinstance(run.artifacts, dict) else None
+    metadata_severity: Literal["error", "warning"] = "error" if require_adapter_metadata else "warning"
     if not isinstance(adapter, dict):
-        issues.append(ContractIssue(severity="warning", path="artifacts.adapter", message="adapter metadata is missing"))
+        issues.append(ContractIssue(severity=metadata_severity, path="artifacts.adapter", message="adapter metadata is missing"))
         return
     for key in ["contract_version", "adapter_name", "adapter_version", "framework", "capabilities"]:
         if key not in adapter:
-            issues.append(ContractIssue(severity="warning", path=f"artifacts.adapter.{key}", message=f"adapter metadata missing {key}"))
+            issues.append(ContractIssue(severity=metadata_severity, path=f"artifacts.adapter.{key}", message=f"adapter metadata missing {key}"))
     version = adapter.get("contract_version")
     if version is not None and version != ADAPTER_CONTRACT_VERSION:
         issues.append(ContractIssue(severity="warning", path="artifacts.adapter.contract_version", message=f"expected {ADAPTER_CONTRACT_VERSION}, got {version}"))
-    if "capabilities" in adapter and not isinstance(adapter.get("capabilities"), dict):
-        issues.append(ContractIssue(severity="warning", path="artifacts.adapter.capabilities", message="adapter capabilities should be a dict"))
+    for key in ["adapter_name", "adapter_version", "framework"]:
+        if key in adapter and not str(adapter.get(key) or "").strip():
+            issues.append(ContractIssue(severity=metadata_severity, path=f"artifacts.adapter.{key}", message=f"adapter metadata {key} must be a non-empty string"))
+    if "capabilities" in adapter:
+        capabilities = adapter.get("capabilities")
+        if not isinstance(capabilities, dict):
+            issues.append(ContractIssue(severity=metadata_severity, path="artifacts.adapter.capabilities", message="adapter capabilities should be a dict"))
+        else:
+            for key, value in capabilities.items():
+                if not isinstance(value, bool):
+                    issues.append(ContractIssue(severity=metadata_severity, path=f"artifacts.adapter.capabilities.{key}", message="adapter capability values must be booleans"))
+    if "lossiness" in adapter:
+        lossiness = adapter.get("lossiness")
+        if not isinstance(lossiness, list) or not all(isinstance(item, str) for item in lossiness):
+            issues.append(ContractIssue(severity=metadata_severity, path="artifacts.adapter.lossiness", message="adapter lossiness must be a list of strings"))
 
 
 def _validate_json_serializable(path: str, value: Any, issues: list[ContractIssue]) -> None:

@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from rsi.models import avg_score, load_artifact, pass_rate, summary, total_tokens, write_json, write_markdown
+from rsi.models import avg_score, evidence, load_artifact, max_risk_level, pass_rate, risk_level, summary, total_tokens, write_json, write_markdown
 
 
 def analyze_evolution_loop(spec_path: str | Path) -> dict[str, Any]:
@@ -44,7 +44,7 @@ def analyze_evolution_loop(spec_path: str | Path) -> dict[str, Any]:
             pass_rates.append(candidate_pass)
             avg_scores.append(candidate_score)
             token_counts.append(candidate_tokens)
-            high_risk_rates.append(_risk_pass_rate(candidate_run, "high"))
+            high_risk_rates.append(_severe_risk_pass_rate(candidate_run))
             net_delta += candidate_pass - input_pass
             token_total += candidate_tokens
         modification = load_artifact(step["modification"]) if step.get("modification") and Path(step["modification"]).exists() else {}
@@ -54,6 +54,7 @@ def analyze_evolution_loop(spec_path: str | Path) -> dict[str, Any]:
         step_metric["introduced_regressions"] = introduced_regressions
         step_metrics.append(step_metric)
     drift_flags = _drift_flags(step_metrics, pass_rates, token_counts, high_risk_rates)
+    risk_evidence = _risk_evidence(drift_flags)
     trend_summary = {
         "first_pass_rate": pass_rates[0] if pass_rates else None,
         "last_pass_rate": pass_rates[-1] if pass_rates else None,
@@ -84,6 +85,8 @@ def analyze_evolution_loop(spec_path: str | Path) -> dict[str, Any]:
             "avg_score_non_decreasing": _non_decreasing(avg_scores),
         },
         "drift_flags": drift_flags,
+        "risk_level": max_risk_level([item["severity"] for item in risk_evidence]),
+        "risk_evidence": risk_evidence,
         "trend_summary": trend_summary,
         "steps": step_metrics,
     }
@@ -97,15 +100,33 @@ def write_loop_markdown(path: str | Path, report: dict[str, Any]) -> None:
     write_markdown(path, "AgentEval RSI Evolution Loop Report", report)
 
 
+def _risk_evidence(flags: list[str]) -> list[dict[str, Any]]:
+    severities = {
+        "pass_rate_regressed_during_loop": "high",
+        "high_risk_pass_rate_drifted_down": "critical",
+        "token_usage_increased_more_than_50_percent": "medium",
+        "accepted_step_introduced_regressions": "high",
+        "loop_stalled": "medium",
+        "goal_drift_detected": "high",
+    }
+    return [{**evidence("evolution_loop", flag.replace("_", " "), severity=severities.get(flag, "low"), item=flag), "flag": flag} for flag in flags]
+
+
 def _non_decreasing(values: list[float]) -> bool:
     return all(current >= previous for previous, current in zip(values, values[1:]))
 
 
-def _risk_pass_rate(run_dir: str | Path, level: str) -> float | None:
+def _severe_risk_pass_rate(run_dir: str | Path) -> float | None:
     by_risk = summary(run_dir).get("by_risk_level", {}) or {}
-    if level not in by_risk:
+    buckets = [(value or {}) for key, value in by_risk.items() if risk_level(key) in {"high", "critical"}]
+    if not buckets:
         return None
-    return float(by_risk.get(level, {}).get("pass_rate", 0) or 0)
+    totals = [int(bucket.get("total", 0) or 0) for bucket in buckets]
+    total = sum(totals)
+    if total > 0:
+        passed = sum(int(bucket.get("passed", 0) or 0) for bucket in buckets)
+        return passed / total
+    return sum(float(bucket.get("pass_rate", 0) or 0) for bucket in buckets) / len(buckets)
 
 
 def _drift_flags(step_metrics: list[dict[str, Any]], pass_rates: list[float], token_counts: list[int], high_risk_rates: list[float | None]) -> list[str]:

@@ -8,7 +8,8 @@ from typing import Any
 import yaml
 
 SEVERITY_RANK = {"low": 1, "medium": 2, "high": 3, "critical": 4}
-STATUS_RANK = {"accepted": 0, "canary": 1, "needs_human_review": 2, "rejected": 3, "rollback_recommended": 4}
+STATUS_ALIASES = {"canary": "canary_only"}
+STATUS_RANK = {"accepted": 0, "canary_only": 1, "needs_human_review": 2, "rejected": 3, "rollback_recommended": 4}
 
 
 def load_artifact(path: str | Path) -> dict[str, Any]:
@@ -44,10 +45,22 @@ def evidence(component: str, message: str, *, severity: str = "medium", source: 
     return payload
 
 
-def max_risk_level(values: list[str]) -> str:
+def max_risk_level(values: list[int | str]) -> str:
     if not values:
         return "low"
     return max((risk_level(value) for value in values), key=lambda value: SEVERITY_RANK.get(value, 0))
+
+
+def risk_score_for_level(level: int | str) -> int:
+    return {"low": 10, "medium": 35, "high": 65, "critical": 85}[risk_level(level)]
+
+
+def extract_risk_level(report: dict[str, Any], *fields: str, default: int | str = "low") -> str:
+    for field in fields:
+        value = report.get(field)
+        if value is not None:
+            return risk_level(value)
+    return risk_level(default)
 
 
 def gate_result(name: str, status: str, reason: str, *, risk: str = "low", source: str | None = None) -> dict[str, Any]:
@@ -57,8 +70,15 @@ def gate_result(name: str, status: str, reason: str, *, risk: str = "low", sourc
     return result
 
 
+def normalize_status(status: str) -> str:
+    value = str(status or "accepted").strip().lower()
+    return STATUS_ALIASES.get(value, value if value in STATUS_RANK else "accepted")
+
+
 def combine_status(left: str, right: str) -> str:
-    return left if STATUS_RANK.get(left, 0) >= STATUS_RANK.get(right, 0) else right
+    left_status = normalize_status(left)
+    right_status = normalize_status(right)
+    return left_status if STATUS_RANK.get(left_status, 0) >= STATUS_RANK.get(right_status, 0) else right_status
 
 
 def load_report(run_dir: str | Path) -> dict[str, Any]:
@@ -103,9 +123,28 @@ def total_tokens(run_dir: str | Path) -> int:
     return int(usage.get("total_input_tokens", 0) or 0) + int(usage.get("output_tokens", 0) or 0)
 
 
-def risk_level(score_or_severity: int | str) -> str:
+def risk_level(score_or_severity: int | float | str | None) -> str:
+    if score_or_severity is None:
+        return "low"
     if isinstance(score_or_severity, str):
-        return score_or_severity if score_or_severity in SEVERITY_RANK else "low"
+        value = score_or_severity.strip().lower().replace("-", "_")
+        aliases = {
+            "none": "low",
+            "safe": "low",
+            "moderate": "medium",
+            "med": "medium",
+            "severe": "critical",
+            "blocker": "critical",
+        }
+        value = aliases.get(value, value)
+        if value.startswith("risk:") or value.startswith("severity:"):
+            value = value.split(":", 1)[1].strip().lower()
+        if value in SEVERITY_RANK:
+            return value
+        try:
+            score_or_severity = float(value)
+        except ValueError:
+            return "low"
     if score_or_severity >= 80:
         return "critical"
     if score_or_severity >= 60:

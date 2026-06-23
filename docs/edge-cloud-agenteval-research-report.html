@@ -1,0 +1,582 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>端云融合 AgentEval 评估框架调研报告</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f8fb;
+      --paper: #ffffff;
+      --ink: #1f2937;
+      --muted: #667085;
+      --line: #d9e2ec;
+      --brand: #2454d6;
+      --brand-dark: #173a9c;
+      --accent: #0f766e;
+      --warn: #b45309;
+      --danger: #b42318;
+      --soft-blue: #eef4ff;
+      --soft-green: #ecfdf3;
+      --soft-orange: #fff7ed;
+      --soft-red: #fef3f2;
+      --code: #0f172a;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", Arial, sans-serif;
+      line-height: 1.65;
+      color: var(--ink);
+      background: var(--bg);
+    }
+
+    a { color: var(--brand); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    .page {
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 40px 20px 72px;
+    }
+
+    .hero {
+      border-radius: 28px;
+      padding: 44px;
+      color: #fff;
+      background:
+        radial-gradient(circle at top right, rgba(125, 211, 252, .42), transparent 32%),
+        linear-gradient(135deg, #0f172a 0%, #1d4ed8 55%, #0f766e 100%);
+      box-shadow: 0 24px 70px rgba(15, 23, 42, .24);
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      gap: 8px;
+      align-items: center;
+      padding: 6px 12px;
+      border: 1px solid rgba(255,255,255,.32);
+      border-radius: 999px;
+      background: rgba(255,255,255,.12);
+      font-size: 13px;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 18px 0 14px;
+      font-size: clamp(32px, 5vw, 54px);
+      line-height: 1.08;
+      letter-spacing: -.04em;
+    }
+
+    .subtitle {
+      max-width: 850px;
+      margin: 0;
+      font-size: 18px;
+      color: rgba(255,255,255,.86);
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 28px;
+    }
+
+    .meta span {
+      padding: 8px 12px;
+      border-radius: 12px;
+      background: rgba(255,255,255,.14);
+      color: rgba(255,255,255,.92);
+      font-size: 14px;
+    }
+
+    .grid {
+      display: grid;
+      gap: 20px;
+      margin-top: 24px;
+    }
+
+    .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+    .card {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      padding: 24px;
+      box-shadow: 0 12px 32px rgba(15, 23, 42, .06);
+    }
+
+    .card h2, .card h3 { margin-top: 0; }
+    h2 {
+      margin: 44px 0 16px;
+      font-size: 28px;
+      letter-spacing: -.02em;
+    }
+    h3 {
+      margin: 28px 0 10px;
+      font-size: 20px;
+    }
+
+    .callout {
+      border-left: 5px solid var(--brand);
+      background: var(--soft-blue);
+      border-radius: 18px;
+      padding: 22px 24px;
+      margin: 24px 0;
+    }
+
+    .callout strong { color: var(--brand-dark); }
+    .callout.warning { border-left-color: var(--warn); background: var(--soft-orange); }
+    .callout.success { border-left-color: var(--accent); background: var(--soft-green); }
+
+    .kpi {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .kpi .num {
+      font-size: 34px;
+      font-weight: 750;
+      color: var(--brand);
+      letter-spacing: -.03em;
+    }
+    .kpi .label { color: var(--muted); font-size: 14px; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      overflow: hidden;
+      border-radius: 18px;
+      background: var(--paper);
+      box-shadow: 0 12px 32px rgba(15, 23, 42, .05);
+    }
+
+    th, td {
+      padding: 14px 14px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+      font-size: 14px;
+    }
+
+    th {
+      background: #f1f5f9;
+      color: #334155;
+      font-weight: 700;
+    }
+
+    tr:last-child td { border-bottom: 0; }
+    .yes { color: #047857; font-weight: 700; }
+    .partial { color: #b45309; font-weight: 700; }
+    .no { color: #b42318; font-weight: 700; }
+
+    code, pre {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    }
+
+    pre {
+      overflow-x: auto;
+      padding: 20px;
+      border-radius: 18px;
+      background: var(--code);
+      color: #e5e7eb;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .pill-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      padding: 0;
+      margin: 14px 0 0;
+      list-style: none;
+    }
+
+    .pill-list li {
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: #f1f5f9;
+      color: #334155;
+      font-size: 14px;
+    }
+
+    .timeline {
+      border-left: 3px solid var(--line);
+      margin-left: 10px;
+      padding-left: 24px;
+    }
+    .timeline .item {
+      position: relative;
+      margin: 18px 0;
+    }
+    .timeline .item::before {
+      content: "";
+      position: absolute;
+      left: -34px;
+      top: 8px;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: var(--brand);
+      box-shadow: 0 0 0 5px var(--soft-blue);
+    }
+
+    .source-list {
+      columns: 2;
+      column-gap: 32px;
+      padding-left: 18px;
+    }
+    .source-list li { break-inside: avoid; margin: 8px 0; }
+
+    footer {
+      margin-top: 46px;
+      color: var(--muted);
+      font-size: 13px;
+      text-align: center;
+    }
+
+    @media (max-width: 820px) {
+      .hero { padding: 30px 24px; border-radius: 22px; }
+      .grid.two, .grid.three { grid-template-columns: 1fr; }
+      .source-list { columns: 1; }
+      table { display: block; overflow-x: auto; white-space: nowrap; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+      <div class="eyebrow">Deep Research · AgentEval</div>
+      <h1>端云融合 AgentEval 评估框架调研报告</h1>
+      <p class="subtitle">截至 2026-06-23，公开资料中尚未看到成熟、通用、明确定位为“端侧 + 云侧协同 AI Agent 评测”的主流 AgentEval 类框架。现有 Agent 评测框架与边缘 AI 基准更适合互补组合。</p>
+      <div class="meta">
+        <span>研究日期：2026-06-23</span>
+        <span>范围：开源框架、商业平台、边缘基准</span>
+        <span>方法：多源检索 + 声明核验 + 归纳对比</span>
+      </div>
+    </section>
+
+    <section class="grid three">
+      <article class="card kpi">
+        <span class="num">0</span>
+        <span class="label">发现的成熟通用端云融合 AgentEval 框架</span>
+      </article>
+      <article class="card kpi">
+        <span class="num">8</span>
+        <span class="label">重点归纳结论</span>
+      </article>
+      <article class="card kpi">
+        <span class="num">24</span>
+        <span class="label">参考来源页面</span>
+      </article>
+    </section>
+
+    <section class="callout success">
+      <strong>一句话结论：</strong>现有 LLM / Agent 评测框架已经覆盖 agent 轨迹、工具调用、在线/离线评估、生产监控、延迟、token 和成本等云侧或应用侧维度；但通常没有把移动端、IoT/边缘设备、本地模型 + 云模型混合、端侧能耗、端侧隐私预算作为一等公民。
+    </section>
+
+    <section>
+      <h2>1. 生态分层</h2>
+      <div class="grid two">
+        <article class="card">
+          <h3>LLM / Agent 行为评测框架</h3>
+          <p>代表项目包括 AgentEval、OpenAI Evals、LangSmith、DeepEval、Ragas、Inspect AI、Azure AI Evaluation、Google Vertex AI Eval。</p>
+          <ul class="pill-list">
+            <li>任务完成度</li>
+            <li>工具调用准确性</li>
+            <li>RAG 质量</li>
+            <li>安全性</li>
+            <li>trajectory / trace</li>
+            <li>latency / token / cost</li>
+          </ul>
+        </article>
+        <article class="card">
+          <h3>边缘 / 端侧 ML 性能基准</h3>
+          <p>代表体系包括 MLPerf Tiny、MLPerf Edge、EdgeBench 等。它们更适合评估设备、模型和硬件性能。</p>
+          <ul class="pill-list">
+            <li>端侧推理性能</li>
+            <li>硬件吞吐</li>
+            <li>端侧延迟</li>
+            <li>能耗</li>
+            <li>资源约束</li>
+            <li>嵌入式 / IoT 场景</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <section>
+      <h2>2. 代表性框架能力对比</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>框架 / 平台</th>
+            <th>Agent 行为评测</th>
+            <th>工具调用 / trajectory</th>
+            <th>云侧监控</th>
+            <th>端侧 / 边缘指标</th>
+            <th>端云协同一等支持</th>
+            <th>定位说明</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>AgentEval</strong></td>
+            <td class="yes">是</td>
+            <td class="yes">是</td>
+            <td class="partial">可扩展</td>
+            <td class="partial">当前需扩展</td>
+            <td class="no">否</td>
+            <td>适合扩展为端云融合 AgentEval。</td>
+          </tr>
+          <tr>
+            <td><strong>OpenAI Evals</strong></td>
+            <td class="yes">是</td>
+            <td class="partial">部分支持</td>
+            <td class="partial">弱</td>
+            <td class="no">否</td>
+            <td class="no">否</td>
+            <td>通用 LLM / agent eval。</td>
+          </tr>
+          <tr>
+            <td><strong>LangSmith</strong></td>
+            <td class="yes">是</td>
+            <td class="yes">强</td>
+            <td class="yes">强</td>
+            <td class="no">否</td>
+            <td class="no">否</td>
+            <td>生产 trace / observability 很成熟。</td>
+          </tr>
+          <tr>
+            <td><strong>DeepEval</strong></td>
+            <td class="yes">是</td>
+            <td class="partial">支持 tracing / components</td>
+            <td class="partial">中</td>
+            <td class="no">否</td>
+            <td class="no">否</td>
+            <td>偏 LLM app / agent 质量评测。</td>
+          </tr>
+          <tr>
+            <td><strong>Ragas</strong></td>
+            <td class="partial">部分</td>
+            <td class="partial">有 agent / tool-use 方向</td>
+            <td class="partial">中</td>
+            <td class="no">否</td>
+            <td class="no">否</td>
+            <td>RAG 与 LLM app 评估强。</td>
+          </tr>
+          <tr>
+            <td><strong>Inspect AI</strong></td>
+            <td class="yes">是</td>
+            <td class="yes">强</td>
+            <td class="partial">中</td>
+            <td class="partial">有 local / sandbox，但非设备指标</td>
+            <td class="no">否</td>
+            <td>适合安全评测、agentic eval、自定义 sandbox。</td>
+          </tr>
+          <tr>
+            <td><strong>Azure AI Evaluation / Microsoft Foundry</strong></td>
+            <td class="yes">强</td>
+            <td class="yes">强</td>
+            <td class="yes">强</td>
+            <td class="partial">未见原生移动 / IoT / 能耗</td>
+            <td class="no">否</td>
+            <td>商业平台中最接近完整 agent eval + production monitoring。</td>
+          </tr>
+          <tr>
+            <td><strong>Google Vertex AI / Gemini Enterprise Agent Platform Eval</strong></td>
+            <td class="partial">有 agent eval 方向</td>
+            <td class="partial">有待进一步确认</td>
+            <td class="yes">强</td>
+            <td class="no">未核验到</td>
+            <td class="no">否</td>
+            <td>确认 agent evaluation 是独立方向，但端云指标不明确。</td>
+          </tr>
+          <tr>
+            <td><strong>MLPerf Tiny / Edge</strong></td>
+            <td class="no">否</td>
+            <td class="no">否</td>
+            <td class="no">否</td>
+            <td class="yes">强</td>
+            <td class="no">否</td>
+            <td>端侧性能基准，与 AgentEval 互补。</td>
+          </tr>
+          <tr>
+            <td><strong>EdgeBench 等边缘基准</strong></td>
+            <td class="no">否 / 弱</td>
+            <td class="no">否</td>
+            <td class="no">否</td>
+            <td class="yes">强</td>
+            <td class="partial">部分边云场景</td>
+            <td>偏系统 / 模型 / 设备性能，不是 agent 行为评测。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>3. 关键发现</h2>
+      <div class="timeline">
+        <div class="item">
+          <h3>主流 AgentEval 框架没有把“端云融合”作为核心对象</h3>
+          <p>OpenAI Evals、Inspect AI、DeepEval、Ragas 等支持 LLM 系统评估、agent、tool-using agents、tracing 和 custom evaluator，但公开文档中没有把 mobile、IoT、edge-cloud collaboration、本地模型 + 云模型协同、端侧能耗、电量、热限制、NPU / CPU / GPU 利用率、弱网 / 离线降级、端侧隐私预算作为内建评测对象。</p>
+        </div>
+        <div class="item">
+          <h3>Microsoft Foundry / Azure AI Evaluation 是商业平台中最接近的方案</h3>
+          <p>它覆盖 agent evaluator、tool call accuracy、task completion、intent resolution、tracing、production monitoring、latency、token consumption、error rate、quality score、CI/CD quality gate、Application Insights、distributed tracing 和企业隔离能力。但它仍不是“端云融合 Agent 评测框架”。</p>
+        </div>
+        <div class="item">
+          <h3>LangSmith、DeepEval、Inspect 更适合作为上层 Agent 行为评测层</h3>
+          <p>这些框架可以评估 agent 是否完成任务、工具是否选对、RAG 是否 grounded、hallucination 是否降低、safety 是否合规、trace 是否符合预期、latency / cost 是否达标。但如果要评测端云系统，需要用户自行把端侧日志、设备指标、云侧调用和协同决策建模为 dataset、trace 或 evaluator。</p>
+        </div>
+        <div class="item">
+          <h3>边缘基准与 AgentEval 是互补关系</h3>
+          <p>MLPerf Tiny / Edge、EdgeBench 更适合评估模型在设备上的推理性能、吞吐、资源和能耗；但通常不评估 Agent 是否完成任务、是否正确选择工具、是否正确进行本地/云端路由。</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>4. 当前空白点</h2>
+      <div class="grid three">
+        <article class="card">
+          <h3>跨层 trace schema</h3>
+          <p>缺少同时描述 device / cloud / hybrid 执行位置、模型来源、网络状态、隐私边界、端侧资源和云侧调用的统一 trace schema。</p>
+        </article>
+        <article class="card">
+          <h3>端云路由决策评估</h3>
+          <p>缺少评估“何时本地执行、何时升级云端、何时弱网降级、何时出于隐私留在端侧”的内建 evaluator。</p>
+        </article>
+        <article class="card">
+          <h3>真实设备环境指标</h3>
+          <p>缺少 energy per successful task、电量、热限制、内存压力、NPU 利用率、弱网质量下降、PII 上传率等标准指标。</p>
+        </article>
+      </div>
+    </section>
+
+    <section>
+      <h2>5. 建议的 AgentEval 扩展路线</h2>
+      <div class="callout">
+        <strong>建议方向：</strong>不要从零重写，而是在现有 AgentEval 数据流上扩展为“端云协同 trace + 多维 evaluator”。
+      </div>
+      <pre><code>Dataset YAML + Config YAML
+  -> Device / Cloud / Hybrid AgentAdapter
+  -> AgentRun + EdgeCloudTrace
+  -> Behavior Evaluators
+  -> Tool Evaluators
+  -> Routing Evaluators
+  -> Device Metric Evaluators
+  -> Privacy Evaluators
+  -> Cost / Latency / Energy Evaluators
+  -> JSON / Markdown / HTML report</code></pre>
+
+      <h3>建议新增 trace 字段</h3>
+      <pre><code>edge_cloud:
+  execution_site: device | cloud | hybrid
+  model_origin: local | cloud | mixed
+  routing_reason: privacy | latency | quality | cost | offline | energy
+  network_state:
+    mode: online | offline | weak | high_latency
+    rtt_ms: 120
+    uplink_kbps: 500
+    downlink_kbps: 1200
+  device:
+    type: phone | tablet | iot | edge_gateway | desktop
+    os: android | ios | linux | macos | windows
+    cpu_usage_pct: 43
+    gpu_usage_pct: 12
+    npu_usage_pct: 68
+    memory_mb: 850
+    battery_delta_pct: 1.3
+    energy_joules: 42.1
+    thermal_state: nominal | warm | throttled
+  cloud:
+    provider: anthropic | openai | azure | vertex | private
+    model: claude-opus-4-8
+    latency_ms: 900
+    input_tokens: 1234
+    output_tokens: 350
+    cost_usd: 0.012
+  privacy:
+    pii_detected: true
+    pii_uploaded: false
+    local_redaction_applied: true</code></pre>
+    </section>
+
+    <section>
+      <h2>6. 建议新增 Evaluator</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Evaluator</th>
+            <th>作用</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td><code>routing</code></td><td>判断 local / cloud / hybrid 路由是否符合策略。</td></tr>
+          <tr><td><code>offline_resilience</code></td><td>评估离线 / 弱网下任务完成度。</td></tr>
+          <tr><td><code>privacy_boundary</code></td><td>检查 PII 是否被上传到云端。</td></tr>
+          <tr><td><code>energy</code></td><td>检查能耗、电量下降是否超阈值。</td></tr>
+          <tr><td><code>thermal</code></td><td>检查是否触发热降频。</td></tr>
+          <tr><td><code>device_resource</code></td><td>检查 CPU / GPU / NPU / memory 使用。</td></tr>
+          <tr><td><code>handoff_latency</code></td><td>评估端云切换开销。</td></tr>
+          <tr><td><code>quality_gain_per_cloud_cost</code></td><td>衡量云端调用带来的质量收益是否值得。</td></tr>
+          <tr><td><code>local_fallback</code></td><td>云端失败时端侧是否正确 fallback。</td></tr>
+          <tr><td><code>cloud_escalation</code></td><td>本地能力不足时是否正确升级到云端。</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>7. 推荐产品定位</h2>
+      <div class="grid two">
+        <article class="card">
+          <h3>中文定位</h3>
+          <p>一个面向端云融合 AI Agent 的评测框架，统一评估 agent 行为质量、工具调用、端云路由、设备资源、网络状态、隐私边界、云成本与能耗表现。</p>
+        </article>
+        <article class="card">
+          <h3>英文定位</h3>
+          <p><strong>Edge-cloud AgentEval:</strong> evaluating hybrid device-cloud agents across quality, latency, privacy, cost, and energy.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="callout warning">
+      <strong>注意：</strong>本报告基于公开文档与调研结果。商业平台能力更新很快，尤其是 Microsoft Foundry、Azure AI Evaluation、Google Vertex AI / Gemini Enterprise Agent Platform 等，应在技术选型或立项前再次核验最新文档、区域限制、preview 状态和计费模型。
+    </section>
+
+    <section>
+      <h2>8. 可核验来源</h2>
+      <ol class="source-list">
+        <li><a href="https://github.com/openai/evals">OpenAI Evals</a></li>
+        <li><a href="https://inspect.aisi.org.uk/">Inspect AI</a></li>
+        <li><a href="https://deepeval.com/docs/getting-started">DeepEval docs</a></li>
+        <li><a href="https://docs.ragas.io/">Ragas docs</a></li>
+        <li><a href="https://docs.langchain.com/langsmith/evaluation-concepts">LangSmith evaluation concepts</a></li>
+        <li><a href="https://docs.langchain.com/langsmith/observability">LangSmith observability</a></li>
+        <li><a href="https://learn.microsoft.com/en-us/azure/foundry/concepts/observability">Microsoft Foundry observability</a></li>
+        <li><a href="https://learn.microsoft.com/en-us/azure/foundry/concepts/built-in-evaluators">Microsoft Foundry built-in evaluators</a></li>
+        <li><a href="https://learn.microsoft.com/en-us/azure/foundry/concepts/evaluation-evaluators/agent-evaluators">Microsoft Foundry agent evaluators</a></li>
+        <li><a href="https://learn.microsoft.com/en-us/azure/foundry/observability/how-to/evaluate-agent">Microsoft Foundry evaluate agent</a></li>
+        <li><a href="https://learn.microsoft.com/en-us/azure/foundry-classic/how-to/develop/evaluate-sdk">Azure AI Evaluation SDK local evaluation</a></li>
+        <li><a href="https://learn.microsoft.com/en-us/azure/foundry-classic/how-to/develop/agent-evaluate-sdk">Azure AI Evaluation SDK agent evaluation</a></li>
+        <li><a href="https://docs.cloud.google.com/vertex-ai/generative-ai/docs/models/evaluation-overview">Google Vertex AI Gen AI evaluation overview</a></li>
+        <li><a href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/evaluation-agents">Google Gemini Enterprise Agent Platform evaluation agents</a></li>
+        <li><a href="https://mlcommons.org/benchmarks/inference-edge/">MLPerf Edge</a></li>
+        <li><a href="https://mlcommons.org/benchmarks/inference-tiny/">MLPerf Tiny</a></li>
+      </ol>
+    </section>
+
+    <footer>
+      Generated for AgentEval research · File: docs/edge-cloud-agenteval-research-report.html
+    </footer>
+  </main>
+</body>
+</html>

@@ -105,10 +105,11 @@ def test_claude_adapter_marks_tool_result_errors() -> None:
     assert tool_result["content"] == run.tool_calls[0].error
 
 
-def test_claude_adapter_raises_when_tool_loop_exceeds_limit() -> None:
+def test_claude_adapter_records_error_when_tool_loop_exceeds_limit() -> None:
     client = FakeClient([tool_response(("toolu_1", "weather", {"city": "北京"}), usage=None)])
     adapter = ClaudeAgentAdapter(AgentConfig(provider="anthropic", settings={"max_tool_iterations": 0}), client=client)
     case = EvalCase(id="c1", input="q", scenario={"tools": [{"name": "weather", "input_schema": {"type": "object"}, "mock_output": {"condition": "sunny"}}]})
 
-    with pytest.raises(RuntimeError, match="tool loop exceeded max_tool_iterations=0"):
-        asyncio.run(adapter.run(case, context=None))
+    run = asyncio.run(adapter.run(case, context=None))
+
+    assert run.errors == ["RuntimeError: tool loop exceeded max_tool_iterations=0"]

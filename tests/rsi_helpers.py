@@ -2,15 +2,18 @@ import json
 from pathlib import Path
 
 
-def write_run(path: Path, pass_rate: float = 1.0, capability: str = "self_modification", difficulty: int = 1, risk_level: str = "low") -> Path:
+def write_run(path: Path, pass_rate: float = 1.0, capability: str = "self_modification", difficulty: int = 1, risk_level: str = "low", by_risk_level: dict | None = None) -> Path:
     path.mkdir(parents=True, exist_ok=True)
+    summary = {
+        "pass_rate": pass_rate,
+        "avg_score": pass_rate,
+        "latency_ms": {"p50": 10, "p95": 20},
+        "usage": {"total_input_tokens": 10, "output_tokens": 5},
+    }
+    if by_risk_level is not None:
+        summary["by_risk_level"] = by_risk_level
     report = {
-        "summary": {
-            "pass_rate": pass_rate,
-            "avg_score": pass_rate,
-            "latency_ms": {"p50": 10, "p95": 20},
-            "usage": {"total_input_tokens": 10, "output_tokens": 5},
-        },
+        "summary": summary,
         "cases": [
             {
                 "id": "c1",
