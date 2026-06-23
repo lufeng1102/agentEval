@@ -1151,10 +1151,9 @@ def suite_health(
     formats: list[str] | None = typer.Option(None, "--format", help="Output format: markdown or json. Can be repeated."),
     stale_days: int = typer.Option(90, "--stale-days", help="Staleness window for reviewed cases when dates are present."),
     saturation_pass_rate: float = typer.Option(0.98, "--saturation-pass-rate", help="Pass-rate threshold for saturated run-history cases."),
-    fail_on: str = typer.Option("never", "--fail-on", help="Fail when issues at this severity or higher exist: low, medium, high, critical, or never."),
+    fail_on: str = typer.Option("never", "--fail-on", callback=lambda value: _normalize_suite_health_fail_on(value), help="Fail when issues at this severity or higher exist: low, medium, high, critical, or never."),
 ) -> None:
     """Analyze eval suite health, lifecycle metadata, run history, production coverage, and human review evidence."""
-    fail_on = _normalize_suite_health_fail_on(fail_on)
     report = analyze_suite_health(dataset, runs_path=runs, production_path=production, human_review_path=human_review, reference_validation_path=reference_validation, stale_days=stale_days, saturation_pass_rate=saturation_pass_rate)
     paths = _write_report_outputs(out, report, formats or ["markdown"], write_suite_health_markdown, write_suite_health_json)
     summary = report["summary"]
